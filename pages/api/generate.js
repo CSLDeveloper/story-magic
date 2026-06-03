@@ -29,6 +29,56 @@ const AGE_CONFIGS = {
   },
 };
 
+// Build locked visual descriptions for each character type
+// These stay identical in every IMG prompt so the AI sees the same character every time
+function buildCharacterBible(heroName, gender, heroType, sidekick, villain) {
+
+  const heroLook = {
+    'A brave knight':    gender === 'Girl'
+      ? `${heroName}, young girl with bright determined eyes, shiny silver armor with pink trim, long hair tucked under a helmet`
+      : `${heroName}, young boy with bright determined eyes, shiny silver armor, short hair under a silver helmet`,
+    'A clever wizard':   gender === 'Girl'
+      ? `${heroName}, young girl with curious sparkling eyes, long purple star-covered robe, pointed purple hat, carrying a glowing wand`
+      : `${heroName}, young boy with curious sparkling eyes, long blue star-covered robe, pointed blue hat, carrying a glowing wand`,
+    'A space explorer':  gender === 'Girl'
+      ? `${heroName}, young girl with ponytail, white space suit with orange stripe, clear bubble helmet, backpack with wings`
+      : `${heroName}, young boy with messy hair, white space suit with blue stripe, clear bubble helmet, jet backpack`,
+    'A magical fairy':   gender === 'Girl'
+      ? `${heroName}, small girl fairy with rainbow butterfly wings, sparkly pink dress, rosy cheeks, golden wand with a star`
+      : `${heroName}, small boy fairy with green dragonfly wings, sparkly green tunic, freckles, silver wand with a star`,
+    'A talking animal':  gender === 'Girl'
+      ? `${heroName}, small girl fox with bright amber eyes, fluffy orange tail with white tip, wearing a tiny red scarf`
+      : `${heroName}, small boy fox with bright amber eyes, fluffy orange tail with white tip, wearing a tiny blue scarf`,
+    'A superhero kid':   gender === 'Girl'
+      ? `${heroName}, young girl with confident smile, bright red cape, yellow lightning bolt on chest, red boots, dark curly hair`
+      : `${heroName}, young boy with confident smile, bright red cape, yellow lightning bolt on chest, red boots, dark spiky hair`,
+  };
+
+  const sidekickLook = {
+    'A talking dragon':    'small friendly purple dragon with big yellow eyes, tiny wings, round belly, always smiling',
+    'A robot dog':         'shiny silver robot dog with big round blue LED eyes, wagging antenna tail, four sturdy legs',
+    'A tiny unicorn':      'palm-sized white unicorn with pastel rainbow mane, tiny golden horn, big gentle brown eyes',
+    'A wise old owl':      'round fluffy brown owl with large gold spectacles, white eyebrows, perched with wings folded',
+    'A mischievous cat':   'orange tabby cat with bright green eyes, striped tail always curled up, wide grin',
+    'A friendly giant':    'enormous gentle giant with bushy red hair, kind blue eyes, patched overalls, always crouching to be at eye level',
+  };
+
+  const villainLook = {
+    'An evil shadow queen':  'tall woman in flowing black gown, silver crown, pale face, dark swirling shadows around her hands',
+    'A grumpy troll king':   'stocky green troll with a lopsided crown, big warty nose, crossed arms, permanent frown',
+    'A sneaky sorcerer':     'thin sly man in dark green robes, pointed grey beard, shifty narrow eyes, crooked wooden staff',
+    'A robot overlord':      'towering silver robot with red glowing eyes, claw hands, spinning gears on chest, loud clanking steps',
+    'A mean sea monster':    'huge purple sea serpent with yellow eyes, jagged fins, dripping seaweed, enormous open mouth',
+    'A jealous witch':       'hunched woman in tattered purple dress, wild green hair, crooked black hat, clutching a bubbling cauldron',
+  };
+
+  const hero    = heroLook[heroType]    || `${heroName}, young ${gender === 'Girl' ? 'girl' : 'boy'} hero in adventure clothing`;
+  const partner = sidekickLook[sidekick] || 'small friendly magical creature companion';
+  const baddie  = villainLook[villain]   || 'dark menacing villain';
+
+  return { hero, partner, baddie };
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -40,9 +90,13 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'All story variables are required' });
   }
 
-  const config = AGE_CONFIGS[ageGroup] || AGE_CONFIGS['Ages 7–9'];
+  const config  = AGE_CONFIGS[ageGroup] || AGE_CONFIGS['Ages 7–9'];
   const pronoun = gender === 'Girl' ? 'she/her' : 'he/him';
   const heroDesc = gender === 'Girl' ? 'young girl hero' : 'young boy hero';
+  const bible   = buildCharacterBible(heroName, gender, heroType, sidekick, villain);
+
+  // This block is prepended to every IMG prompt so every page has the same character anchor
+  const characterAnchor = `HERO always looks like: ${bible.hero}. SIDEKICK always looks like: ${bible.partner}. VILLAIN always looks like: ${bible.baddie}.`;
 
   const prompt = `Write an exciting, imaginative children's story perfectly suited for ${ageGroup}.
 
@@ -54,6 +108,11 @@ Story details:
 - Special power: ${power}
 - Villain: ${villain}
 - Lesson/moral: ${lesson}
+
+CHARACTER APPEARANCE (use these exact descriptions whenever writing IMG prompts):
+- HERO: ${bible.hero}
+- SIDEKICK: ${bible.partner}
+- VILLAIN: ${bible.baddie}
 
 AGE GROUP REQUIREMENTS (${ageGroup}):
 - Number of pages: exactly ${config.pages} pages
@@ -72,21 +131,15 @@ IMG: [illustration prompt for this page]
 
 CRITICAL RULES FOR IMG PROMPTS:
 - Write the IMG line immediately after each page's story text
-- The IMG must describe ONLY what is literally happening in the text just above it
-- Identify the KEY ACTION verb from the page (running, hiding, fighting, crying, laughing) and put it in the IMG
-- Name EVERY character who appears on that page by their role (young girl hero, talking dragon, troll king, etc)
-- Describe their facial expression and body language (smiling, terrified, arms raised, crouching)
-- Name the exact location from the page text (inside the dark cave, on top of the castle tower, underwater palace throne room)
-- Describe the time of day or lighting if mentioned (glowing moonlight, bright sunny meadow, dark stormy sky)
-- Format: [characters + expressions + action] + [exact location] + [lighting/mood] + "children's book watercolor illustration"
-- Length: 20-25 words minimum
-- NEVER write a generic or vague prompt — every word must come directly from what just happened on that page
+- Begin EVERY IMG with the exact character appearance description above for whichever characters appear on that page — copy it word for word
+- Then describe the KEY ACTION happening on that page (the specific moment, expression, body language)
+- Then name the exact location and lighting from the page text
+- End with: children's book watercolor illustration, soft pastel colors, no text
+- Length: 25-35 words
+- The character descriptions must be IDENTICAL across every page they appear on — never vary hair, clothing, or features
 
-Example of WRONG IMG (too vague):
-IMG: hero and dragon in forest, watercolor
-
-Example of CORRECT IMG (specific to the page):
-IMG: young girl hero Luna laughing with arms wide open, tiny purple dragon Spark doing backflips, sunlit enchanted forest clearing, children's book watercolor illustration
+Example of CORRECT IMG:
+IMG: ${bible.hero}, grinning and jumping with fists raised in triumph, ${setting}, golden afternoon sunlight, children's book watercolor illustration, soft pastel colors, no text
 
 Do NOT write a separate image section at the end — every IMG goes inline after its page.
 
@@ -110,61 +163,54 @@ Write the complete story now:`;
     let titleFound = false;
     const pages = [];
     let currentPageNum = null;
-    let currentText = [];
-    let currentImg = null;
+    let currentText  = [];
+    let currentImg   = null;
 
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
 
-      // Grab title (first non-page line)
       if (!titleFound && !trimmed.startsWith('---')) {
         title = trimmed;
         titleFound = true;
         continue;
       }
 
-      // Page header
       const pageMatch = trimmed.match(/^---\s*Page\s*(\d+)\s*---/i);
       if (pageMatch) {
-        // Save previous page
         if (currentPageNum !== null) {
           pages.push({ pageNum: currentPageNum, text: currentText.join(' '), img: currentImg });
         }
         currentPageNum = parseInt(pageMatch[1]);
         currentText = [];
-        currentImg = null;
+        currentImg  = null;
         continue;
       }
 
-      // Inline IMG prompt
       const imgMatch = trimmed.match(/^IMG:\s*(.+)/i);
       if (imgMatch) {
         currentImg = imgMatch[1].trim();
         continue;
       }
 
-      // Story text
       if (currentPageNum !== null) {
         currentText.push(trimmed);
       }
     }
 
-    // Push last page
     if (currentPageNum !== null) {
       pages.push({ pageNum: currentPageNum, text: currentText.join(' '), img: currentImg });
     }
 
-    // Build storyText for display and images array
     let storyText = title + '\n';
-    const images = [];
+    const images  = [];
 
     pages.forEach(p => {
       storyText += `\n--- Page ${p.pageNum} ---\n${p.text}\n`;
-      // Enrich img prompt with consistent style — keep style suffix short so scene detail dominates
+      // Prepend the character anchor to every image prompt so Stability AI sees it every time
       const enrichedImg = p.img
-        ? `${p.img}, no text, no words`
-        : `${heroName} the ${heroType} in ${setting}, children's book watercolor illustration, soft pastel colors, no text`;
+        ? `${p.img} | ${characterAnchor} | no text, no words`
+        : `${bible.hero}, ${setting}, children's book watercolor illustration, soft pastel colors, no text | ${characterAnchor}`;
       images.push(enrichedImg);
     });
 
