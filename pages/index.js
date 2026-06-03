@@ -49,41 +49,58 @@ function StarField() {
   );
 }
 
-// Build Pollinations image URL from description
-function imageUrl(description, pageNum, attempt = 0) {
-  const style = 'childrens book illustration colorful watercolor cute friendly';
-  const fullPrompt = `${description}, ${style}`;
-  const encoded = encodeURIComponent(fullPrompt);
-  const seed = (pageNum * 7) + (attempt * 31);
-  return `https://image.pollinations.ai/prompt/${encoded}?width=512&height=384&seed=${seed}&nologo=true&enhance=false&model=flux`;
-}
-
 function IllustrationBlock({ description, pageNum }) {
   const [status, setStatus] = useState('loading');
   const [attempt, setAttempt] = useState(0);
-  const [timedOut, setTimedOut] = useState(false);
+  const [src, setSrc] = useState(null);
   const timeoutRef = useRef(null);
 
-  const src = description ? imageUrl(description, pageNum, attempt) : null;
-
   useEffect(() => {
+    if (!description) return;
     setStatus('loading');
-    setTimedOut(false);
-    clearTimeout(timeoutRef.current);
+    setSrc(null);
+
+    // Fetch image via our own server-side proxy
+    const controller = new AbortController();
     timeoutRef.current = setTimeout(() => {
-      setTimedOut(true);
+      controller.abort();
       setStatus('error');
-    }, 35000);
-    return () => clearTimeout(timeoutRef.current);
-  }, [pageNum, attempt]);
+    }, 45000);
+
+    fetch('/api/illustrate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description, pageNum, attempt }),
+      signal: controller.signal,
+    })
+      .then(res => {
+        if (!res.ok) throw new Error('Failed');
+        return res.blob();
+      })
+      .then(blob => {
+        clearTimeout(timeoutRef.current);
+        const url = URL.createObjectURL(blob);
+        setSrc(url);
+        setStatus('loaded');
+      })
+      .catch(err => {
+        clearTimeout(timeoutRef.current);
+        if (err.name !== 'AbortError') setStatus('error');
+      });
+
+    return () => {
+      clearTimeout(timeoutRef.current);
+      controller.abort();
+    };
+  }, [pageNum, attempt, description]);
 
   const retry = () => {
     setAttempt(a => a + 1);
     setStatus('loading');
-    setTimedOut(false);
+    setSrc(null);
   };
 
-  if (!src) {
+  if (!description) {
     return (
       <div style={illStyles.wrapper}>
         <div style={illStyles.placeholder}>
@@ -106,24 +123,23 @@ function IllustrationBlock({ description, pageNum }) {
       {status === 'error' && (
         <div style={illStyles.placeholder}>
           <span style={{ fontSize: '2rem' }}>😕</span>
-          <span style={illStyles.label}>{timedOut ? 'Taking too long...' : 'Could not load illustration'}</span>
+          <span style={illStyles.label}>Could not load illustration</span>
           <button onClick={retry} style={illStyles.retryBtn}>🔄 Try Again</button>
         </div>
       )}
-      <img
-        key={`${pageNum}-${attempt}`}
-        src={src}
-        alt={`Illustration for page ${pageNum}`}
-        style={{
-          width: '100%',
-          display: status === 'loaded' ? 'block' : 'none',
-          borderRadius: 12,
-          maxHeight: 280,
-          objectFit: 'cover',
-        }}
-        onLoad={() => { clearTimeout(timeoutRef.current); setStatus('loaded'); }}
-        onError={() => { clearTimeout(timeoutRef.current); setStatus('error'); }}
-      />
+      {status === 'loaded' && src && (
+        <img
+          src={src}
+          alt={`Illustration for page ${pageNum}`}
+          style={{
+            width: '100%',
+            display: 'block',
+            borderRadius: 12,
+            maxHeight: 280,
+            objectFit: 'cover',
+          }}
+        />
+      )}
     </div>
   );
 }
