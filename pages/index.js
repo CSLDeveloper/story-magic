@@ -49,114 +49,162 @@ function StarField() {
   );
 }
 
-function IllustrationBlock({ description, pageNum }) {
-  const [status, setStatus] = useState('loading');
-  const [attempt, setAttempt] = useState(0);
-  const [src, setSrc] = useState(null);
-  const timeoutRef = useRef(null);
-
-  useEffect(() => {
-    if (!description) return;
-    setStatus('loading');
-    setSrc(null);
-
-    // Fetch image via our own server-side proxy
-    const controller = new AbortController();
-    timeoutRef.current = setTimeout(() => {
-      controller.abort();
-      setStatus('error');
-    }, 45000);
-
-    fetch('/api/illustrate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ description, pageNum, attempt }),
-      signal: controller.signal,
-    })
-      .then(res => {
-        if (!res.ok) throw new Error('Failed');
-        return res.blob();
-      })
-      .then(blob => {
-        clearTimeout(timeoutRef.current);
-        const url = URL.createObjectURL(blob);
-        setSrc(url);
-        setStatus('loaded');
-      })
-      .catch(err => {
-        clearTimeout(timeoutRef.current);
-        if (err.name !== 'AbortError') setStatus('error');
-      });
-
-    return () => {
-      clearTimeout(timeoutRef.current);
-      controller.abort();
-    };
-  }, [pageNum, attempt, description]);
-
-  const retry = () => {
-    setAttempt(a => a + 1);
-    setStatus('loading');
-    setSrc(null);
-  };
-
-  if (!description) {
-    return (
-      <div style={illStyles.wrapper}>
-        <div style={illStyles.placeholder}>
-          <span style={{ fontSize: '2.5rem' }}>🎨</span>
-          <span style={illStyles.label}>No illustration for this page</span>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div style={illStyles.wrapper}>
-      {status === 'loading' && (
-        <div style={illStyles.placeholder}>
-          <span style={{ fontSize: '2rem', animation: 'spin 2s linear infinite', display: 'block' }}>🎨</span>
-          <span style={illStyles.label}>Painting your illustration...</span>
-          <span style={{ ...illStyles.label, fontSize: '0.72rem', opacity: 0.6 }}>This can take 15–30 seconds</span>
-        </div>
-      )}
-      {status === 'error' && (
-        <div style={illStyles.placeholder}>
-          <span style={{ fontSize: '2rem' }}>😕</span>
-          <span style={illStyles.label}>Could not load illustration</span>
-          <button onClick={retry} style={illStyles.retryBtn}>🔄 Try Again</button>
-        </div>
-      )}
-      {status === 'loaded' && src && (
-        <img
-          src={src}
-          alt={`Illustration for page ${pageNum}`}
-          style={{
-            width: '100%',
-            display: 'block',
-            borderRadius: 12,
-            maxHeight: 280,
-            objectFit: 'cover',
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-const illStyles = {
-  wrapper: { marginBottom: 20, borderRadius: 12, overflow: 'hidden', background: '#e8e0f8', minHeight: 180 },
-  placeholder: {
-    height: 180, display: 'flex', flexDirection: 'column',
-    alignItems: 'center', justifyContent: 'center', gap: 8,
+// Scene elements keyed to story variables
+const SCENE_ELEMENTS = {
+  settings: {
+    'An enchanted forest':      { bg: ['#c8e6c9','#a5d6a7'], ground: '#388e3c', clouds: true,  trees: true,  stars: false },
+    'Outer space':              { bg: ['#1a237e','#0d47a1'], ground: '#283593', clouds: false, trees: false, stars: true  },
+    'An underwater kingdom':    { bg: ['#b3e5fc','#81d4fa'], ground: '#0288d1', clouds: false, trees: false, stars: false, waves: true },
+    "A candy land":             { bg: ['#fce4ec','#f8bbd0'], ground: '#f48fb1', clouds: true,  trees: false, stars: false, candy: true },
+    "A giant's castle":         { bg: ['#cfd8dc','#b0bec5'], ground: '#546e7a', clouds: true,  trees: false, stars: false, castle: true },
+    'A secret underground city':{ bg: ['#212121','#424242'], ground: '#616161', clouds: false, trees: false, stars: true  },
   },
-  label: { color: '#7c3aed', fontSize: '0.85rem', fontWeight: 700, fontFamily: "'Nunito', sans-serif" },
-  retryBtn: {
-    background: '#c084fc', border: 'none', borderRadius: 8,
-    padding: '6px 16px', color: 'white', cursor: 'pointer',
-    fontFamily: "'Nunito', sans-serif", fontWeight: 700, fontSize: '0.85rem', marginTop: 4,
+  heroes: {
+    'A brave knight':    '🗡️', 'A clever wizard': '🧙', 'A space explorer': '🚀',
+    'A magical fairy':   '🧚', 'A talking animal': '🐺', 'A superhero kid':  '⚡',
+  },
+  sidekicks: {
+    'A talking dragon': '🐉', 'A robot dog':    '🤖', 'A tiny unicorn':    '🦄',
+    'A wise old owl':   '🦉', 'A mischievous cat':'🐱','A friendly giant':  '🏔️',
+  },
+  villains: {
+    'An evil shadow queen': '👑', 'A grumpy troll king': '👹', 'A sneaky sorcerer': '🧟',
+    'A robot overlord':     '🦾', 'A mean sea monster':  '🐙', 'A jealous witch':   '🧙‍♀️',
   },
 };
+
+function SketchIllustration({ answers, pageNum, totalPages }) {
+  const setting = answers.setting || 'An enchanted forest';
+  const scene = SCENE_ELEMENTS.settings[setting] || SCENE_ELEMENTS.settings['An enchanted forest'];
+  const heroEmoji   = SCENE_ELEMENTS.heroes[answers.heroType]   || '🦸';
+  const sidekickEmoji = SCENE_ELEMENTS.sidekicks[answers.sidekick] || '🐾';
+  const villainEmoji  = SCENE_ELEMENTS.villains[answers.villain]   || '😈';
+
+  // Vary the scene composition by page number
+  const showVillain  = pageNum > Math.floor(totalPages * 0.3) && pageNum < Math.floor(totalPages * 0.85);
+  const showVictory  = pageNum >= Math.floor(totalPages * 0.85);
+  const heroX        = showVillain ? 80  : showVictory ? 200 : 130;
+  const sidekickX    = showVillain ? 140 : showVictory ? 260 : 210;
+  const seed         = pageNum * 13;
+
+  // Pseudo-random helpers seeded by page
+  const rand = (min, max, offset = 0) => min + ((seed + offset) % (max - min));
+
+  return (
+    <svg
+      viewBox="0 0 500 220"
+      xmlns="http://www.w3.org/2000/svg"
+      style={{ width: '100%', borderRadius: 12, display: 'block', marginBottom: 20 }}
+    >
+      {/* Sky gradient */}
+      <defs>
+        <linearGradient id={`sky-${pageNum}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={scene.bg[0]} />
+          <stop offset="100%" stopColor={scene.bg[1]} />
+        </linearGradient>
+      </defs>
+      <rect width="500" height="220" fill={`url(#sky-${pageNum})`} rx="12" />
+
+      {/* Stars (space / underground) */}
+      {scene.stars && [0,1,2,3,4,5,6,7,8,9,10,11].map(i => (
+        <circle key={i} cx={rand(10,490,i*17)} cy={rand(10,130,i*23)} r={rand(1,3,i*7)} fill="white" opacity="0.9" />
+      ))}
+
+      {/* Clouds */}
+      {scene.clouds && [0,1,2].map(i => (
+        <g key={i} opacity="0.85">
+          <ellipse cx={rand(60,420,i*60)} cy={rand(25,65,i*40)} rx={rand(30,55,i*20)} ry={rand(14,22,i*15)} fill="white" />
+          <ellipse cx={rand(60,420,i*60)+18} cy={rand(25,65,i*40)-6} rx={rand(20,35,i*12)} ry={rand(12,18,i*10)} fill="white" />
+        </g>
+      ))}
+
+      {/* Waves (underwater) */}
+      {scene.waves && [0,1,2,3].map(i => (
+        <ellipse key={i} cx={rand(30,470,i*80)} cy={rand(60,130,i*30)} rx={rand(40,80,i*25)} ry={rand(8,16,i*12)} fill="#29b6f6" opacity="0.3" />
+      ))}
+
+      {/* Castle silhouette */}
+      {scene.castle && (
+        <g fill="#455a64">
+          <rect x="300" y="60" width="120" height="100" />
+          <rect x="295" y="50" width="20" height="30" />
+          <rect x="325" y="45" width="20" height="35" />
+          <rect x="355" y="50" width="20" height="30" />
+          <rect x="385" y="55" width="20" height="30" />
+          <rect x="340" y="100" width="24" height="60" fill="#37474f" />
+        </g>
+      )}
+
+      {/* Candy decorations */}
+      {scene.candy && [0,1,2,3].map(i => (
+        <g key={i}>
+          <circle cx={rand(30,460,i*70)} cy={rand(100,160,i*40)} r={rand(10,20,i*15)} fill={['#f06292','#ba68c8','#4fc3f7','#aed581'][i]} opacity="0.8" />
+          <rect x={rand(30,460,i*70)-3} y={rand(100,160,i*40)} width="6" height={rand(20,40,i*18)} fill="#a1887f" />
+        </g>
+      ))}
+
+      {/* Trees */}
+      {scene.trees && [0,1,2,3,4].map(i => (
+        <g key={i}>
+          <rect x={rand(10,460,i*55)-4} y="130" width="8" height={rand(40,70,i*20)} fill="#5d4037" />
+          <ellipse cx={rand(10,460,i*55)} cy={rand(90,130,i*22)} rx={rand(18,30,i*15)} ry={rand(22,38,i*18)} fill={['#2e7d32','#388e3c','#43a047','#1b5e20','#33691e'][i]} />
+        </g>
+      ))}
+
+      {/* Ground */}
+      <rect x="0" y="170" width="500" height="50" fill={scene.ground} rx="0" />
+      {/* Ground texture lines */}
+      {[0,1,2,3,4,5].map(i => (
+        <line key={i} x1={rand(0,480,i*40)} y1="175" x2={rand(0,480,i*40)+rand(20,60,i*22)} y2="175" stroke="rgba(0,0,0,0.12)" strokeWidth="1.5" />
+      ))}
+
+      {/* Villain (middle pages) */}
+      {showVillain && (
+        <text x="370" y="165" fontSize="42" textAnchor="middle" style={{ filter: 'drop-shadow(2px 2px 3px rgba(0,0,0,0.4))' }}>
+          {villainEmoji}
+        </text>
+      )}
+
+      {/* Victory star burst */}
+      {showVictory && (
+        <g>
+          {[0,1,2,3,4,5,6,7].map(i => (
+            <line key={i}
+              x1="250" y1="90"
+              x2={250 + 55 * Math.cos(i * Math.PI / 4)}
+              y2={90  + 55 * Math.sin(i * Math.PI / 4)}
+              stroke="#ffd54f" strokeWidth="3" opacity="0.7"
+            />
+          ))}
+          <circle cx="250" cy="90" r="18" fill="#ffeb3b" opacity="0.9" />
+          <text x="250" y="98" fontSize="18" textAnchor="middle">⭐</text>
+        </g>
+      )}
+
+      {/* Sidekick */}
+      <text x={sidekickX} y="165" fontSize="38" textAnchor="middle" style={{ filter: 'drop-shadow(1px 2px 2px rgba(0,0,0,0.3))' }}>
+        {sidekickEmoji}
+      </text>
+
+      {/* Hero */}
+      <text x={heroX} y="163" fontSize="44" textAnchor="middle" style={{ filter: 'drop-shadow(1px 2px 3px rgba(0,0,0,0.35))' }}>
+        {heroEmoji}
+      </text>
+
+      {/* Hero name label */}
+      <rect x={heroX - 28} y="172" width="56" height="16" rx="8" fill="rgba(0,0,0,0.35)" />
+      <text x={heroX} y="183" fontSize="9" fill="white" textAnchor="middle" fontFamily="sans-serif" fontWeight="bold">
+        {answers.heroName || 'Hero'}
+      </text>
+
+      {/* Page caption strip */}
+      <rect x="0" y="200" width="500" height="20" fill="rgba(0,0,0,0.25)" />
+      <text x="250" y="214" fontSize="9" fill="rgba(255,255,255,0.8)" textAnchor="middle" fontFamily="sans-serif">
+        {answers.heroName} · {setting}
+      </text>
+    </svg>
+  );
+}
 
 // Parse story into pages: [{pageNum, text}]
 function parsePages(storyText) {
@@ -523,9 +571,10 @@ export default function Home() {
               {currentPage > 0 && storyData.pages[currentPage - 1] && (
                 <div style={{ animation: 'fadeIn 0.35s ease' }}>
                   {/* Illustration */}
-                  <IllustrationBlock
-                    description={storyData.images[currentPage - 1]}
+                  <SketchIllustration
+                    answers={answers}
                     pageNum={currentPage}
+                    totalPages={totalPages}
                   />
 
                   {/* Page number badge */}
