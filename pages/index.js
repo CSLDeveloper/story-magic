@@ -178,8 +178,9 @@ export default function Home() {
   const [errorMsg, setErrorMsg]     = useState('');
   const [currentPage, setCurrentPage] = useState(0); // 0 = title page
   const [isReading, setIsReading]   = useState(false);
+  const [readLoading, setReadLoading] = useState(false);
+  const audioRef = useRef(null);
   const inputRef = useRef(null);
-  const speechRef = useRef(null);
 
   useEffect(() => {
     if (screen !== 'loading') return;
@@ -203,55 +204,80 @@ export default function Home() {
   }, [currentPage]);
 
   const stopReading = () => {
-    if (typeof window !== 'undefined' && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = '';
+      audioRef.current = null;
     }
     setIsReading(false);
+    setReadLoading(false);
   };
 
-  const toggleRead = useCallback(() => {
+  const toggleRead = useCallback(async () => {
     if (!storyData) return;
-    if (typeof window === 'undefined' || !window.speechSynthesis) {
-      alert('Sorry, your browser does not support text-to-speech.');
-      return;
-    }
 
-    if (isReading) {
+    // If already reading, stop
+    if (isReading || readLoading) {
       stopReading();
       return;
     }
 
-    const pages = storyData.pages;
+    // Build the text to read
     let text = '';
     if (currentPage === 0) {
-      text = storyData.title;
-    } else if (pages[currentPage - 1]) {
-      text = `Page ${currentPage}. ${pages[currentPage - 1].text}`;
+      text = `${storyData.title}. A story about ${answers.heroName}.`;
+    } else if (storyData.pages[currentPage - 1]) {
+      text = `Page ${currentPage}. ${storyData.pages[currentPage - 1].text}`;
     }
-
     if (!text) return;
 
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 0.88;
-    utterance.pitch = 1.1;
-    utterance.volume = 1;
+    setReadLoading(true);
 
-    // Prefer a child-friendly voice
-    const voices = window.speechSynthesis.getVoices();
-    const preferred = voices.find(v =>
-      v.name.includes('Samantha') || v.name.includes('Karen') ||
-      v.name.includes('Moira') || v.name.includes('Google UK') ||
-      v.lang === 'en-US'
-    );
-    if (preferred) utterance.voice = preferred;
+    try {
+      const res = await fetch('/api/speak', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
 
-    utterance.onend = () => setIsReading(false);
-    utterance.onerror = () => setIsReading(false);
+      if (!res.ok) {
+        // Fallback to browser TTS if ElevenLabs not configured
+        const err = await res.json();
+        console.warn('ElevenLabs not available, falling back to browser TTS:', err.error);
+        setReadLoading(false);
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.rate = 0.88;
+        utterance.pitch = 1.1;
+        utterance.onend = () => setIsReading(false);
+        window.speechSynthesis.speak(utterance);
+        setIsReading(true);
+        return;
+      }
 
-    speechRef.current = utterance;
-    window.speechSynthesis.speak(utterance);
-    setIsReading(true);
-  }, [isReading, currentPage, storyData]);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audioRef.current = audio;
+
+      audio.onended = () => {
+        setIsReading(false);
+        URL.revokeObjectURL(url);
+      };
+      audio.onerror = () => {
+        setIsReading(false);
+        setReadLoading(false);
+      };
+
+      await audio.play();
+      setReadLoading(false);
+      setIsReading(true);
+
+    } catch (err) {
+      console.error('TTS error:', err);
+      setReadLoading(false);
+      setIsReading(false);
+    }
+  }, [isReading, readLoading, currentPage, storyData, answers]);
 
   const handleAnswer = (value) => {
     const newAnswers = { ...answers, [STEPS[stepIndex].id]: value };
@@ -497,10 +523,15 @@ export default function Home() {
                 onClick={toggleRead}
                 style={{
                   ...styles.readBtn,
-                  background: isReading ? 'linear-gradient(135deg,#f87171,#ef4444)' : 'linear-gradient(135deg,#4ade80,#22c55e)',
+                  background: isReading
+                    ? 'linear-gradient(135deg,#f87171,#ef4444)'
+                    : readLoading
+                    ? 'linear-gradient(135deg,#fb923c,#f97316)'
+                    : 'linear-gradient(135deg,#4ade80,#22c55e)',
+                  opacity: readLoading ? 0.85 : 1,
                 }}
               >
-                {isReading ? '⏹ Stop' : '🔊 Read Aloud'}
+                {isReading ? '⏹ Stop' : readLoading ? '⏳ Loading...' : '🔊 Read Aloud'}
               </button>
 
               {/* Page navigation */}
