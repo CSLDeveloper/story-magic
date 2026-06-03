@@ -70,21 +70,25 @@ FORMATTING RULES — follow exactly:
 [story text for this page]
 IMG: [illustration prompt for this page]
 
-- The IMG line must appear immediately after each page's story text, before the next page header
-- Each IMG prompt must be a detailed, specific description (15-20 words) of exactly what is visually happening on THAT page
-- IMG prompts must describe the specific action, characters, expressions, and environment visible in the scene
-- IMG prompts must always mention: the setting (${setting}), and which characters are present
-- IMG prompts must be written for a Stability AI image generator in children's watercolor illustration style
-- Do NOT write a separate image section at the end — every IMG goes inline after its page
+CRITICAL RULES FOR IMG PROMPTS:
+- Write the IMG line immediately after each page's story text
+- The IMG must describe ONLY what is literally happening in the text just above it
+- Identify the KEY ACTION verb from the page (running, hiding, fighting, crying, laughing) and put it in the IMG
+- Name EVERY character who appears on that page by their role (young girl hero, talking dragon, troll king, etc)
+- Describe their facial expression and body language (smiling, terrified, arms raised, crouching)
+- Name the exact location from the page text (inside the dark cave, on top of the castle tower, underwater palace throne room)
+- Describe the time of day or lighting if mentioned (glowing moonlight, bright sunny meadow, dark stormy sky)
+- Format: [characters + expressions + action] + [exact location] + [lighting/mood] + "children's book watercolor illustration"
+- Length: 20-25 words minimum
+- NEVER write a generic or vague prompt — every word must come directly from what just happened on that page
 
-Example of correct format:
---- Page 1 ---
-Once upon a time, Luna the fairy lived in a giant mushroom house.
-IMG: young girl fairy with wings standing inside cozy glowing mushroom home in enchanted forest, watercolor
+Example of WRONG IMG (too vague):
+IMG: hero and dragon in forest, watercolor
 
---- Page 2 ---
-One morning Luna discovered her magic wand had gone missing!
-IMG: surprised young girl fairy searching frantically through colorful flowers in enchanted forest, watercolor
+Example of CORRECT IMG (specific to the page):
+IMG: young girl hero Luna laughing with arms wide open, tiny purple dragon Spark doing backflips, sunlit enchanted forest clearing, children's book watercolor illustration
+
+Do NOT write a separate image section at the end — every IMG goes inline after its page.
 
 Write the complete story now:`;
 
@@ -157,10 +161,10 @@ Write the complete story now:`;
 
     pages.forEach(p => {
       storyText += `\n--- Page ${p.pageNum} ---\n${p.text}\n`;
-      // Enrich img prompt with consistent style context
+      // Enrich img prompt with consistent style — keep style suffix short so scene detail dominates
       const enrichedImg = p.img
-        ? `${p.img}, children's book watercolor illustration, soft pastel colors, cute friendly art style, no text`
-        : `${heroName} the ${heroType} in ${setting}, children's book watercolor illustration, soft pastel colors`;
+        ? `${p.img}, no text, no words`
+        : `${heroName} the ${heroType} in ${setting}, children's book watercolor illustration, soft pastel colors, no text`;
       images.push(enrichedImg);
     });
 

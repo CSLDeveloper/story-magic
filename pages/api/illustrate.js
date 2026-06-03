@@ -11,7 +11,7 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Stability API key not configured' });
   }
 
-  const prompt = `Children's book illustration, watercolor style, soft colors, cute and friendly, ${description}. No text, no words, storybook art.`;
+  const prompt = `${description}. Soft pastel watercolor, children's picture book style, cute and expressive characters, no text or words in image.`;
 
   try {
     const response = await fetch(
@@ -25,7 +25,7 @@ export default async function handler(req, res) {
         body: (() => {
           const form = new FormData();
           form.append('prompt', prompt);
-          form.append('negative_prompt', 'text, words, letters, scary, dark, violent, ugly, realistic, photo');
+          form.append('negative_prompt', 'text, words, letters, numbers, captions, watermark, scary, violent, dark, realistic, photo, blurry, ugly');
           form.append('aspect_ratio', '3:2');
           form.append('style_preset', 'fantasy-art');
           form.append('seed', String((pageNum * 7919) % 4294967295));
