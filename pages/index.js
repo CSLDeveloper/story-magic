@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import Head from 'next/head';
 
 const STEPS = [
   { id: 'heroName',  emoji: '🧒', label: 'Your Hero',     question: "What's your hero's name?",            type: 'text',   placeholder: 'e.g. Luna, Max, Zara...' },
+  { id: 'gender',    emoji: '⭐', label: 'Hero Gender',   question: 'Is your hero a boy or a girl?',        type: 'choice', choices: ['Boy', 'Girl'] },
   { id: 'heroType',  emoji: '🦸', label: 'Hero Type',     question: 'What kind of hero are they?',          type: 'choice', choices: ['A brave knight', 'A clever wizard', 'A space explorer', 'A magical fairy', 'A talking animal', 'A superhero kid'] },
   { id: 'sidekick',  emoji: '🐾', label: 'Sidekick',      question: "What's their sidekick?",               type: 'choice', choices: ['A talking dragon', 'A robot dog', 'A tiny unicorn', 'A wise old owl', 'A mischievous cat', 'A friendly giant'] },
   { id: 'setting',   emoji: '🌍', label: 'World',         question: 'Where does the story take place?',     type: 'choice', choices: ['An enchanted forest', 'Outer space', 'An underwater kingdom', 'A candy land', "A giant's castle", 'A secret underground city'] },
@@ -17,12 +18,12 @@ const LOADING_MSGS = [
   '🎨 Painting the world...',
   '🐉 Waking up your sidekick...',
   '✨ Adding extra sparkle...',
-  '🚀 Launching the story...',
+  '🖼️ Creating illustrations...',
   '🌈 Almost ready!',
 ];
 
-const EMOJIS = { heroName:'🧒', heroType:'🦸', sidekick:'🐾', setting:'🌍', power:'✨', villain:'😈', lesson:'💡' };
-const LABELS = { heroName:'Hero', heroType:'Type', sidekick:'Sidekick', setting:'World', power:'Power', villain:'Villain', lesson:'Lesson' };
+const EMOJIS = { heroName:'🧒', gender:'⭐', heroType:'🦸', sidekick:'🐾', setting:'🌍', power:'✨', villain:'😈', lesson:'💡' };
+const LABELS = { heroName:'Hero', gender:'Gender', heroType:'Type', sidekick:'Sidekick', setting:'World', power:'Power', villain:'Villain', lesson:'Lesson' };
 
 function StarField() {
   const stars = Array.from({ length: 35 }, (_, i) => ({
@@ -47,15 +48,62 @@ function StarField() {
   );
 }
 
+// Build Pollinations image URL from description
+function imageUrl(description, pageNum) {
+  const style = 'cute colorful childrens book illustration watercolor style';
+  const prompt = encodeURIComponent(`${description}, ${style}`);
+  return `https://image.pollinations.ai/prompt/${prompt}?width=512&height=384&seed=${pageNum}&nologo=true`;
+}
+
+// Parse story into pages: [{pageNum, text}]
+function parsePages(storyText) {
+  const lines = storyText.split('\n');
+  const pages = [];
+  let title = '';
+  let currentPage = null;
+  let currentText = [];
+
+  lines.forEach(line => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+
+    if (!title && !trimmed.startsWith('---')) {
+      title = trimmed;
+      return;
+    }
+
+    const pageMatch = trimmed.match(/^---\s*Page\s*(\d+)\s*---/i);
+    if (pageMatch) {
+      if (currentPage !== null) {
+        pages.push({ pageNum: currentPage, text: currentText.join(' ') });
+      }
+      currentPage = parseInt(pageMatch[1]);
+      currentText = [];
+    } else if (currentPage !== null) {
+      currentText.push(trimmed);
+    }
+  });
+
+  if (currentPage !== null && currentText.length > 0) {
+    pages.push({ pageNum: currentPage, text: currentText.join(' ') });
+  }
+
+  return { title, pages };
+}
+
 export default function Home() {
-  const [screen, setScreen]       = useState('intro');
-  const [stepIndex, setStepIndex] = useState(0);
-  const [answers, setAnswers]     = useState({});
-  const [textInput, setTextInput] = useState('');
-  const [story, setStory]         = useState('');
+  const [screen, setScreen]         = useState('intro');
+  const [stepIndex, setStepIndex]   = useState(0);
+  const [answers, setAnswers]       = useState({});
+  const [textInput, setTextInput]   = useState('');
+  const [storyData, setStoryData]   = useState(null); // { title, pages, images }
   const [loadingMsg, setLoadingMsg] = useState(LOADING_MSGS[0]);
-  const [errorMsg, setErrorMsg]   = useState('');
+  const [errorMsg, setErrorMsg]     = useState('');
+  const [currentPage, setCurrentPage] = useState(0); // 0 = title page
+  const [isReading, setIsReading]   = useState(false);
+  const [imgLoaded, setImgLoaded]   = useState({});
   const inputRef = useRef(null);
+  const speechRef = useRef(null);
 
   useEffect(() => {
     if (screen !== 'loading') return;
@@ -72,6 +120,62 @@ export default function Home() {
       setTimeout(() => inputRef.current?.focus(), 50);
     }
   }, [screen, stepIndex]);
+
+  // Stop reading when page changes
+  useEffect(() => {
+    stopReading();
+  }, [currentPage]);
+
+  const stopReading = () => {
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+    setIsReading(false);
+  };
+
+  const toggleRead = useCallback(() => {
+    if (!storyData) return;
+    if (typeof window === 'undefined' || !window.speechSynthesis) {
+      alert('Sorry, your browser does not support text-to-speech.');
+      return;
+    }
+
+    if (isReading) {
+      stopReading();
+      return;
+    }
+
+    const pages = storyData.pages;
+    let text = '';
+    if (currentPage === 0) {
+      text = storyData.title;
+    } else if (pages[currentPage - 1]) {
+      text = `Page ${currentPage}. ${pages[currentPage - 1].text}`;
+    }
+
+    if (!text) return;
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 0.88;
+    utterance.pitch = 1.1;
+    utterance.volume = 1;
+
+    // Prefer a child-friendly voice
+    const voices = window.speechSynthesis.getVoices();
+    const preferred = voices.find(v =>
+      v.name.includes('Samantha') || v.name.includes('Karen') ||
+      v.name.includes('Moira') || v.name.includes('Google UK') ||
+      v.lang === 'en-US'
+    );
+    if (preferred) utterance.voice = preferred;
+
+    utterance.onend = () => setIsReading(false);
+    utterance.onerror = () => setIsReading(false);
+
+    speechRef.current = utterance;
+    window.speechSynthesis.speak(utterance);
+    setIsReading(true);
+  }, [isReading, currentPage, storyData]);
 
   const handleAnswer = (value) => {
     const newAnswers = { ...answers, [STEPS[stepIndex].id]: value };
@@ -94,7 +198,10 @@ export default function Home() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Something went wrong');
-      setStory(data.story);
+
+      const { title, pages } = parsePages(data.story);
+      setStoryData({ title, pages, images: data.images || [] });
+      setCurrentPage(0);
       setScreen('story');
     } catch (err) {
       setErrorMsg(err.message);
@@ -103,23 +210,19 @@ export default function Home() {
   };
 
   const restart = () => {
+    stopReading();
     setScreen('intro');
     setStepIndex(0);
     setAnswers({});
     setTextInput('');
-    setStory('');
+    setStoryData(null);
     setErrorMsg('');
-  };
-
-  const formatStory = (text) => {
-    return text.split('\n').filter(l => l.trim()).map((line, i) => {
-      if (i === 0) return <h2 key={i} style={styles.storyTitle}>{line}</h2>;
-      if (line.startsWith('--- Page')) return <div key={i} style={styles.pageHead}>{line.replace(/---/g, '').trim()}</div>;
-      return <p key={i} style={styles.storyP}>{line}</p>;
-    });
+    setCurrentPage(0);
+    setImgLoaded({});
   };
 
   const currentStep = STEPS[stepIndex];
+  const totalPages = storyData ? storyData.pages.length : 0;
 
   return (
     <>
@@ -135,14 +238,18 @@ export default function Home() {
         @keyframes bounce { from{transform:translateY(0)} to{transform:translateY(-8px)} }
         @keyframes cardIn { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:none} }
         @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+        @keyframes fadeIn { from{opacity:0} to{opacity:1} }
         .choice-btn:hover { background: rgba(192,132,252,0.25) !important; border-color: #c084fc !important; transform: translateY(-2px); }
         .choice-btn:active { transform: scale(0.97) !important; }
         .main-btn:hover { transform: translateY(-2px); filter: brightness(1.08); }
         .back-btn:hover { color: white !important; border-color: rgba(255,255,255,0.4) !important; }
+        .nav-btn:hover { background: rgba(192,132,252,0.3) !important; border-color: #c084fc !important; }
+        .read-btn:hover { filter: brightness(1.1); }
         input.text-inp:focus { border-color: #c084fc !important; box-shadow: 0 0 0 3px rgba(192,132,252,0.15); }
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); border-radius: 3px; }
         ::-webkit-scrollbar-thumb { background: rgba(192,132,252,0.4); border-radius: 3px; }
+        .img-placeholder { background: linear-gradient(135deg, #1a0a3e, #0a1a3e); border-radius: 12px; display:flex; align-items:center; justify-content:center; color: rgba(255,255,255,0.3); font-size: 2rem; }
       `}</style>
 
       <div style={styles.app}>
@@ -153,7 +260,7 @@ export default function Home() {
           <div style={styles.card}>
             <span style={styles.bigEmoji}>📚</span>
             <h1 style={styles.h1}>Story Magic!</h1>
-            <p style={styles.sub}>Answer 7 fun questions and I&apos;ll write YOUR very own magical adventure story — just for you! 🌟</p>
+            <p style={styles.sub}>Answer 8 fun questions and I&apos;ll write YOUR very own magical illustrated adventure story — just for you! 🌟</p>
             <button className="main-btn" style={styles.btn} onClick={() => { setStepIndex(0); setAnswers({}); setScreen('questions'); }}>
               Start My Story! ✨
             </button>
@@ -190,10 +297,16 @@ export default function Home() {
                 </button>
               </div>
             ) : (
-              <div style={styles.choices}>
+              <div style={{
+                ...styles.choices,
+                gridTemplateColumns: currentStep.choices.length === 2 ? '1fr 1fr' : '1fr 1fr',
+              }}>
                 {currentStep.choices.map(choice => (
-                  <button key={choice} className="choice-btn" style={styles.choiceBtn} onClick={() => handleAnswer(choice)}>
-                    {choice}
+                  <button key={choice} className="choice-btn" style={{
+                    ...styles.choiceBtn,
+                    ...(currentStep.choices.length === 2 ? { padding: '18px 12px', fontSize: '1.05rem' } : {}),
+                  }} onClick={() => handleAnswer(choice)}>
+                    {choice === 'Boy' ? '👦 Boy' : choice === 'Girl' ? '👧 Girl' : choice}
                   </button>
                 ))}
               </div>
@@ -213,23 +326,127 @@ export default function Home() {
             <div style={{ textAlign: 'center', padding: '10px 0' }}>
               <span style={{ fontSize: '4.5rem', display: 'block', marginBottom: 18, animation: 'spin 2s linear infinite' }}>⭐</span>
               <div style={{ fontFamily: "'Fredoka One', cursive", fontSize: '1.3rem', color: '#c084fc', marginBottom: 6 }}>{loadingMsg}</div>
-              <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: '0.9rem' }}>Writing your special story...</div>
+              <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: '0.9rem' }}>Creating your illustrated story...</div>
             </div>
           </div>
         )}
 
         {/* STORY */}
-        {screen === 'story' && (
-          <div style={styles.storyWrap}>
-            <div style={styles.storyHead}>
-              <span style={{ fontFamily: "'Fredoka One', cursive", fontSize: '1.15rem', color: 'white' }}>📖 Your Magical Story!</span>
-              <span style={{ fontFamily: "'Fredoka One', cursive", fontSize: '1.15rem', color: 'white' }}>🌟</span>
+        {screen === 'story' && storyData && (
+          <div style={styles.bookWrap}>
+
+            {/* Book header */}
+            <div style={styles.bookHeader}>
+              <span style={{ fontFamily: "'Fredoka One', cursive", fontSize: '1.1rem', color: 'white' }}>
+                📖 {storyData.title || 'Your Magical Story'}
+              </span>
+              <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.85rem' }}>
+                {currentPage === 0 ? 'Cover' : `Page ${currentPage} of ${totalPages}`}
+              </span>
             </div>
-            <div style={styles.storyBody}>
-              {formatStory(story)}
+
+            {/* Page content */}
+            <div style={styles.pageContent}>
+
+              {/* Title / cover page */}
+              {currentPage === 0 && (
+                <div style={{ textAlign: 'center', padding: '20px 0', animation: 'fadeIn 0.4s ease' }}>
+                  <div style={{ fontSize: '4rem', marginBottom: 16 }}>📚</div>
+                  <h2 style={styles.storyTitle}>{storyData.title}</h2>
+                  <p style={{ color: '#6d28d9', fontWeight: 700, fontSize: '0.95rem', marginBottom: 8 }}>
+                    A story about {answers.heroName}
+                  </p>
+                  <p style={{ color: '#9ca3af', fontSize: '0.85rem' }}>
+                    {answers.heroType} • {answers.setting}
+                  </p>
+                  <div style={{ marginTop: 24, padding: '12px 20px', background: '#f3e8ff', borderRadius: 12, display: 'inline-block' }}>
+                    <p style={{ color: '#7c3aed', fontSize: '0.88rem', fontWeight: 700 }}>💡 {answers.lesson}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Story pages */}
+              {currentPage > 0 && storyData.pages[currentPage - 1] && (
+                <div style={{ animation: 'fadeIn 0.35s ease' }}>
+                  {/* Illustration */}
+                  <div style={{ marginBottom: 20, borderRadius: 12, overflow: 'hidden', background: '#e8e0f8', minHeight: 200 }}>
+                    {storyData.images[currentPage - 1] ? (
+                      <div style={{ position: 'relative' }}>
+                        {!imgLoaded[currentPage] && (
+                          <div className="img-placeholder" style={{ height: 200 }}>🎨</div>
+                        )}
+                        <img
+                          src={imageUrl(storyData.images[currentPage - 1], currentPage)}
+                          alt={`Illustration for page ${currentPage}`}
+                          style={{
+                            width: '100%', display: imgLoaded[currentPage] ? 'block' : 'none',
+                            borderRadius: 12, maxHeight: 280, objectFit: 'cover',
+                          }}
+                          onLoad={() => setImgLoaded(prev => ({ ...prev, [currentPage]: true }))}
+                          onError={() => setImgLoaded(prev => ({ ...prev, [currentPage]: true }))}
+                        />
+                      </div>
+                    ) : (
+                      <div className="img-placeholder" style={{ height: 200 }}>🎨</div>
+                    )}
+                  </div>
+
+                  {/* Page number badge */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                    <div style={{ background: '#c084fc', color: 'white', borderRadius: 20, padding: '3px 14px', fontFamily: "'Fredoka One', cursive", fontSize: '0.85rem' }}>
+                      Page {currentPage}
+                    </div>
+                  </div>
+
+                  {/* Story text */}
+                  <p style={styles.storyP}>{storyData.pages[currentPage - 1].text}</p>
+                </div>
+              )}
             </div>
-            <div style={{ marginTop: 14 }}>
-              <button className="main-btn" style={styles.btn} onClick={restart}>✨ Write Another Story!</button>
+
+            {/* Controls */}
+            <div style={styles.bookControls}>
+              {/* Read aloud button */}
+              <button
+                className="read-btn"
+                onClick={toggleRead}
+                style={{
+                  ...styles.readBtn,
+                  background: isReading ? 'linear-gradient(135deg,#f87171,#ef4444)' : 'linear-gradient(135deg,#4ade80,#22c55e)',
+                }}
+              >
+                {isReading ? '⏹ Stop' : '🔊 Read Aloud'}
+              </button>
+
+              {/* Page navigation */}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <button
+                  className="nav-btn"
+                  style={{ ...styles.navBtn, opacity: currentPage === 0 ? 0.4 : 1 }}
+                  onClick={() => { if (currentPage > 0) setCurrentPage(currentPage - 1); }}
+                  disabled={currentPage === 0}
+                >
+                  ← Prev
+                </button>
+                <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.82rem', minWidth: 60, textAlign: 'center' }}>
+                  {currentPage}/{totalPages}
+                </span>
+                <button
+                  className="nav-btn"
+                  style={{ ...styles.navBtn, opacity: currentPage === totalPages ? 0.4 : 1 }}
+                  onClick={() => { if (currentPage < totalPages) setCurrentPage(currentPage + 1); }}
+                  disabled={currentPage === totalPages}
+                >
+                  Next →
+                </button>
+              </div>
+            </div>
+
+            {/* New story button */}
+            <div style={{ marginTop: 12 }}>
+              <button className="main-btn" style={{ ...styles.btn, fontSize: '1rem', padding: '12px 20px' }} onClick={restart}>
+                ✨ Write Another Story!
+              </button>
             </div>
           </div>
         )}
@@ -264,6 +481,31 @@ const styles = {
     maxWidth: 580, width: '100%',
     boxShadow: '0 30px 80px rgba(0,0,0,0.5)',
     animation: 'cardIn 0.4s ease',
+  },
+  bookWrap: {
+    position: 'relative', zIndex: 10,
+    maxWidth: 620, width: '100%',
+    animation: 'cardIn 0.4s ease',
+  },
+  bookHeader: {
+    background: 'linear-gradient(135deg,#c084fc,#818cf8)',
+    borderRadius: '24px 24px 0 0', padding: '18px 26px',
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+  },
+  pageContent: {
+    background: '#fefce8',
+    padding: '28px 28px',
+    minHeight: 420,
+    border: '2px solid rgba(192,132,252,0.3)', borderTop: 'none',
+  },
+  bookControls: {
+    background: '#f3e8ff',
+    borderTop: '2px solid rgba(192,132,252,0.2)',
+    padding: '14px 20px',
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    flexWrap: 'wrap', gap: 10,
+    border: '2px solid rgba(192,132,252,0.3)', borderTop: 'none',
+    borderRadius: '0 0 24px 24px',
   },
   bigEmoji: {
     fontSize: '3.2rem', display: 'block', textAlign: 'center',
@@ -321,34 +563,24 @@ const styles = {
     borderRadius: 20, padding: '2px 10px', fontSize: '0.74rem',
     color: 'rgba(255,255,255,0.65)', fontWeight: 700,
   },
-  storyWrap: {
-    position: 'relative', zIndex: 10,
-    maxWidth: 760, width: '100%',
-    animation: 'cardIn 0.4s ease',
-  },
-  storyHead: {
-    background: 'linear-gradient(135deg,#c084fc,#818cf8)',
-    borderRadius: '24px 24px 0 0', padding: '20px 28px',
-    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-  },
-  storyBody: {
-    background: '#fefce8', borderRadius: '0 0 24px 24px',
-    padding: '36px 36px', maxHeight: '70vh', overflowY: 'auto',
-    border: '2px solid rgba(192,132,252,0.3)', borderTop: 'none',
-  },
   storyTitle: {
     fontFamily: "'Fredoka One', cursive",
-    fontSize: 'clamp(1.7rem,4vw,2.2rem)',
-    color: '#6d28d9', textAlign: 'center', marginBottom: 24, lineHeight: 1.2,
-  },
-  pageHead: {
-    fontFamily: "'Fredoka One', cursive", fontSize: '0.92rem',
-    color: '#c084fc', background: '#f3e8ff',
-    borderLeft: '4px solid #c084fc', padding: '7px 12px',
-    borderRadius: '0 8px 8px 0', margin: '24px 0 12px',
+    fontSize: 'clamp(1.6rem,4vw,2.1rem)',
+    color: '#6d28d9', marginBottom: 12, lineHeight: 1.2,
   },
   storyP: {
-    color: '#1e1b4b', fontSize: '1rem', lineHeight: 1.8,
-    marginBottom: 8, fontWeight: 600,
+    color: '#1e1b4b', fontSize: '1.05rem', lineHeight: 1.85,
+    fontWeight: 600, fontFamily: "'Nunito', sans-serif",
+  },
+  navBtn: {
+    background: 'rgba(192,132,252,0.12)', border: '1.5px solid rgba(192,132,252,0.25)',
+    borderRadius: 10, padding: '8px 16px', color: '#6d28d9',
+    fontFamily: "'Nunito', sans-serif", fontSize: '0.88rem', fontWeight: 800,
+    cursor: 'pointer', transition: 'all .18s',
+  },
+  readBtn: {
+    border: 'none', borderRadius: 10, padding: '9px 18px', color: 'white',
+    fontFamily: "'Fredoka One', cursive", fontSize: '0.95rem',
+    cursor: 'pointer', transition: 'all .18s',
   },
 };
