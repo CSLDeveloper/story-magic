@@ -1,8 +1,6 @@
 // In-memory portrait cache per story session
-// Key: storyId, Value: { hero: Buffer, sidekick: Buffer, timestamp: number }
 const portraitCache = new Map();
 
-// Clean up entries older than 30 minutes
 setInterval(() => {
   const cutoff = Date.now() - 30 * 60 * 1000;
   for (const [key, val] of portraitCache.entries()) {
@@ -10,47 +8,58 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000);
 
-const STABILITY_URL = 'https://api.stability.ai/v2beta/stable-image/generate/sd3';
-
 const NEGATIVE_PROMPT = [
   'text', 'words', 'letters', 'numbers', 'watermark',
-  'scary', 'violent', 'realistic', 'photo', 'blurry',
-  'deformed', 'extra limbs', 'dragon head on human',
-  'animal head on human body', 'mutant', 'ugly', 'bad anatomy',
-  'wrong species', 'mismatched character', 'inconsistent character',
+  'scary', 'violent', 'realistic photo', 'blurry',
+  'deformed', 'extra limbs', 'bad anatomy', 'ugly',
+  'wrong species', 'inconsistent character',
 ].join(', ');
 
-// Single Stability AI call — text-to-image or image-to-image
-async function generateImage(apiKey, prompt, referenceBuffer = null, strength = 0.60) {
+// Text-to-image using SD3.5 — for generating the reference portrait
+async function textToImage(apiKey, prompt) {
   const form = new FormData();
   form.append('prompt', prompt);
   form.append('negative_prompt', NEGATIVE_PROMPT);
   form.append('model', 'sd3.5-medium');
+  form.append('aspect_ratio', '1:1'); // Square for portrait
   form.append('output_format', 'jpeg');
+  form.append('seed', '42');
 
-  if (referenceBuffer) {
-    form.append('mode', 'image-to-image');
-    form.append('strength', String(strength));
-    form.append('image', new Blob([referenceBuffer], { type: 'image/jpeg' }), 'reference.jpg');
-  } else {
-    form.append('aspect_ratio', '3:2');
-    form.append('seed', '42');
-  }
-
-  const res = await fetch(STABILITY_URL, {
+  const res = await fetch('https://api.stability.ai/v2beta/stable-image/generate/sd3', {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Accept': 'image/*',
-    },
+    headers: { 'Authorization': `Bearer ${apiKey}`, 'Accept': 'image/*' },
+    body: form,
+  });
+
+  if (!res.ok) throw new Error(`Portrait generation failed ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  return Buffer.from(await res.arrayBuffer());
+}
+
+// Style Transfer — applies the character portrait's visual style to a new scene
+// This is fundamentally different from image-to-image:
+// instead of modifying the portrait, it uses the portrait as a style reference
+// and generates a completely new scene with that character's visual DNA
+async function styleTransfer(apiKey, scenePrompt, portraitBuffer, fidelity = 0.7) {
+  const form = new FormData();
+  form.append('prompt', scenePrompt);
+  form.append('negative_prompt', NEGATIVE_PROMPT);
+  form.append('fidelity', String(fidelity));
+  form.append('output_format', 'jpeg');
+  // The portrait is the style reference, not the scene base
+  form.append('image', new Blob([portraitBuffer], { type: 'image/jpeg' }), 'style_reference.jpg');
+
+  const res = await fetch('https://api.stability.ai/v2beta/stable-image/edit/style', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${apiKey}`, 'Accept': 'image/*' },
     body: form,
   });
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`Stability AI error ${res.status}: ${err.slice(0, 200)}`);
+    // If style transfer endpoint fails, fall back to text-to-image
+    console.warn(`Style transfer failed (${res.status}), falling back to text-to-image: ${err.slice(0, 100)}`);
+    return null;
   }
-
   return Buffer.from(await res.arrayBuffer());
 }
 
@@ -60,7 +69,6 @@ export default async function handler(req, res) {
   }
 
   const { description, pageNum, storyId, heroPortraitPrompt, sidekickPortraitPrompt } = req.body;
-
   if (!description) return res.status(400).json({ error: 'Description required' });
   if (!storyId)     return res.status(400).json({ error: 'storyId required' });
 
@@ -71,30 +79,29 @@ export default async function handler(req, res) {
     let imageBuffer;
 
     if (pageNum === 1) {
-      // Page 1 — generate hero and sidekick portraits in parallel (text-to-image)
+      // Page 1: generate hero portrait (text-to-image, fixed seed for consistency)
+      // Also generate sidekick portrait in parallel
       const [heroBuffer, sidekickBuffer] = await Promise.all([
-        generateImage(apiKey, heroPortraitPrompt || description),
+        textToImage(apiKey, heroPortraitPrompt || description),
         sidekickPortraitPrompt
-          ? generateImage(apiKey, sidekickPortraitPrompt)
+          ? textToImage(apiKey, sidekickPortraitPrompt)
           : Promise.resolve(null),
       ]);
 
-      // Cache both portraits for the rest of the story
       portraitCache.set(storyId, {
         hero: heroBuffer,
         sidekick: sidekickBuffer,
         timestamp: Date.now(),
       });
 
-      // Page 1 shows the hero portrait
+      // Return hero portrait as page 1 illustration
       imageBuffer = heroBuffer;
 
     } else {
-      // Pages 2+ — wait for portrait cache to be populated by page 1
-      // Poll up to 30 seconds in case page 1 is still generating
+      // Pages 2+: wait up to 30s for page 1 portrait to be cached
       let cached = portraitCache.get(storyId);
       if (!cached?.hero) {
-        for (let attempt = 0; attempt < 30; attempt++) {
+        for (let i = 0; i < 30; i++) {
           await new Promise(r => setTimeout(r, 1000));
           cached = portraitCache.get(storyId);
           if (cached?.hero) break;
@@ -102,17 +109,48 @@ export default async function handler(req, res) {
       }
 
       if (cached?.hero) {
-        let enrichedPrompt = description;
+        // Build scene prompt with both character descriptions embedded
+        let scenePrompt = description;
         if (cached.sidekick && sidekickPortraitPrompt) {
           const sidekickDesc = sidekickPortraitPrompt
             .replace(/, full body character portrait.*$/i, '')
             .trim();
-          enrichedPrompt = `${description} The sidekick companion looks like: ${sidekickDesc}.`;
+          scenePrompt = `${description} Sidekick is: ${sidekickDesc}.`;
         }
-        imageBuffer = await generateImage(apiKey, enrichedPrompt, cached.hero, 0.60);
+
+        // Use style transfer with hero portrait as the style reference
+        // fidelity 0.7 = strong character style carried through, scene still varies
+        imageBuffer = await styleTransfer(apiKey, scenePrompt, cached.hero, 0.7);
+
+        // If style transfer failed, fall back to plain text-to-image
+        if (!imageBuffer) {
+          const form = new FormData();
+          form.append('prompt', scenePrompt);
+          form.append('negative_prompt', NEGATIVE_PROMPT);
+          form.append('model', 'sd3.5-medium');
+          form.append('aspect_ratio', '3:2');
+          form.append('output_format', 'jpeg');
+          const fallback = await fetch('https://api.stability.ai/v2beta/stable-image/generate/sd3', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${apiKey}`, 'Accept': 'image/*' },
+            body: form,
+          });
+          imageBuffer = Buffer.from(await fallback.arrayBuffer());
+        }
       } else {
-        // Portrait never arrived — plain text-to-image fallback
-        imageBuffer = await generateImage(apiKey, description);
+        // Portrait never arrived — plain text-to-image
+        const form = new FormData();
+        form.append('prompt', description);
+        form.append('negative_prompt', NEGATIVE_PROMPT);
+        form.append('model', 'sd3.5-medium');
+        form.append('aspect_ratio', '3:2');
+        form.append('output_format', 'jpeg');
+        const fallback = await fetch('https://api.stability.ai/v2beta/stable-image/generate/sd3', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${apiKey}`, 'Accept': 'image/*' },
+          body: form,
+        });
+        imageBuffer = Buffer.from(await fallback.arrayBuffer());
       }
     }
 
