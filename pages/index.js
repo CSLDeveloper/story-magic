@@ -222,7 +222,7 @@ export default function Home() {
       if (!res.ok) {
         // Fallback to browser TTS if ElevenLabs not configured
         const err = await res.json();
-        console.warn('ElevenLabs not available, falling back to browser TTS:', err.error);
+        console.warn('OpenAI TTS not available, falling back to browser TTS:', err.error);
         setReadLoading(false);
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.rate = 0.88;
