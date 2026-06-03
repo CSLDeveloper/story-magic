@@ -26,7 +26,7 @@ export default async function handler(req, res) {
           const form = new FormData();
           form.append('prompt', prompt);
           form.append('negative_prompt', 'text, words, letters, scary, dark, violent, ugly, realistic, photo');
-          form.append('aspect_ratio', '4:3');
+          form.append('aspect_ratio', '3:2');
           form.append('style_preset', 'fantasy-art');
           form.append('seed', String((pageNum * 7919) % 4294967295));
           form.append('output_format', 'jpeg');

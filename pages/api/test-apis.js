@@ -1,32 +1,32 @@
 export default async function handler(req, res) {
   const results = {};
 
-  // Test ElevenLabs
+  // Test OpenAI TTS
   try {
-    const elRes = await fetch('https://api.elevenlabs.io/v1/text-to-speech/9BWtsMINqrJLrRacOk9x', {
+    const ttsRes = await fetch('https://api.openai.com/v1/audio/speech', {
       method: 'POST',
       headers: {
-        'xi-api-key': process.env.ELEVENLABS_API_KEY,
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
         'Content-Type': 'application/json',
-        'Accept': 'audio/mpeg',
       },
       body: JSON.stringify({
-        text: 'Hello test.',
-        model_id: 'eleven_turbo_v2',
-        voice_settings: { stability: 0.4, similarity_boost: 0.8, style: 0.6 },
+        model: 'tts-1-hd',
+        voice: 'nova',
+        input: 'Hello test.',
+        speed: 0.92,
       }),
     });
-    const body = elRes.ok ? 'OK - audio received' : await elRes.text();
-    results.elevenlabs = { status: elRes.status, body: body.slice(0, 300) };
+    const body = ttsRes.ok ? 'OK - audio received' : await ttsRes.text();
+    results.openai_tts = { status: ttsRes.status, body: body.slice(0, 300) };
   } catch (e) {
-    results.elevenlabs = { error: e.message };
+    results.openai_tts = { error: e.message };
   }
 
   // Test Stability AI
   try {
     const form = new FormData();
     form.append('prompt', 'a cute cat in a garden, watercolor illustration');
-    form.append('aspect_ratio', '4:3');
+    form.append('aspect_ratio', '3:2');
     form.append('output_format', 'jpeg');
 
     const stRes = await fetch('https://api.stability.ai/v2beta/stable-image/generate/core', {
