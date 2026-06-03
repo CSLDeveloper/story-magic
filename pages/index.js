@@ -1,3 +1,4 @@
+
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Head from 'next/head';
 
@@ -383,7 +384,10 @@ export default function Home() {
         @keyframes fadeIn { from{opacity:0} to{opacity:1} }
         @keyframes illReveal { from{opacity:0;transform:scale(1.03)} to{opacity:1;transform:scale(1)} }
         @keyframes shimmer { 0%{background-position:-200% center} 100%{background-position:200% center} }
-        @keyframes floatIll { 0%,100%{transform:translateY(0px)} 50%{transform:translateY(-5px)} }
+        @keyframes floatIll { 0%,100%{transform:translateY(0px)} 50%{transform:translateY(-6px)} }
+        @keyframes floatIllSlow { 0%,100%{transform:translateY(0px)} 50%{transform:translateY(-4px)} }
+        @keyframes rockIll { 0%,100%{transform:rotate(0deg) translateY(0px)} 25%{transform:rotate(1deg) translateY(-3px)} 75%{transform:rotate(-1deg) translateY(-3px)} }
+        @keyframes zoomBreath { 0%,100%{transform:scale(1)} 50%{transform:scale(1.025)} }
         .choice-btn:hover { background: rgba(192,132,252,0.25) !important; border-color: #c084fc !important; transform: translateY(-2px); }
         .choice-btn:active { transform: scale(0.97) !important; }
         .main-btn:hover { transform: translateY(-2px); filter: brightness(1.08); }
@@ -540,24 +544,34 @@ export default function Home() {
               {/* Story pages */}
               {currentPage > 0 && storyData.pages[currentPage - 1] && (
                 <div style={{ animation: 'fadeIn 0.35s ease' }}>
-                  {/* Illustration — uses preloaded cache */}
-                  <div style={{ animation: imgCache[currentPage] ? 'floatIll 4s ease-in-out infinite' : 'none' }}>
-                    <IllustrationBlock
-                      cachedSrc={imgCache[currentPage]}
-                      description={storyData.images[currentPage - 1]}
-                      pageNum={currentPage}
-                      onRetry={(p, src) => setImgCache(prev => ({ ...prev, [p]: src }))}
-                    />
-                  </div>
+                  {/* Illustration — varied animation per page */}
+                  {(() => {
+                    const animations = [
+                      'floatIll 4s ease-in-out infinite',
+                      'floatIllSlow 6s ease-in-out infinite',
+                      'rockIll 5s ease-in-out infinite',
+                      'zoomBreath 5s ease-in-out infinite',
+                      'floatIll 3.5s ease-in-out infinite reverse',
+                      'rockIll 7s ease-in-out infinite reverse',
+                      'zoomBreath 6s 0.5s ease-in-out infinite',
+                      'floatIllSlow 4.5s 1s ease-in-out infinite',
+                    ];
+                    const anim = imgCache[currentPage]
+                      ? animations[currentPage % animations.length]
+                      : 'none';
+                    return (
+                      <div style={{ animation: anim }}>
+                        <IllustrationBlock
+                          cachedSrc={imgCache[currentPage]}
+                          description={storyData.images[currentPage - 1]}
+                          pageNum={currentPage}
+                          onRetry={(p, src) => setImgCache(prev => ({ ...prev, [p]: src }))}
+                        />
+                      </div>
+                    );
+                  })()}
 
-                  {/* Page number badge */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                    <div style={{ background: '#c084fc', color: 'white', borderRadius: 20, padding: '3px 14px', fontFamily: "'Fredoka One', cursive", fontSize: '0.85rem' }}>
-                      Page {currentPage}
-                    </div>
-                  </div>
-
-                  {/* Story text */}
+                  {/* Story text — no page number, already shown in header */}
                   <p style={styles.storyP}>{storyData.pages[currentPage - 1].text}</p>
                 </div>
               )}
