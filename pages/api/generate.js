@@ -214,7 +214,13 @@ Write the complete story now:`;
       images.push(enrichedImg);
     });
 
-    return res.status(200).json({ story: storyText.trim(), images });
+    return res.status(200).json({
+      story: storyText.trim(),
+      images,
+      storyId: `story_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      heroPortraitPrompt: `${bible.hero}, full body character portrait, neutral pose, plain simple background, children's book watercolor illustration, soft pastel colors, cute and friendly, no text`,
+      sidekickPortraitPrompt: `${bible.partner}, full body character portrait, neutral pose, plain simple background, children's book watercolor illustration, soft pastel colors, cute and friendly, no text`,
+    });
 
   } catch (error) {
     console.error('Anthropic API error:', error);
