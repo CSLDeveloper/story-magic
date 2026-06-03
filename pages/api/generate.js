@@ -207,11 +207,29 @@ Write the complete story now:`;
 
     pages.forEach(p => {
       storyText += `\n--- Page ${p.pageNum} ---\n${p.text}\n`;
-      // Prepend the character anchor to every image prompt so Stability AI sees it every time
-      const enrichedImg = p.img
-        ? `${p.img} | ${characterAnchor} | no text, no words`
-        : `${bible.hero}, ${setting}, children's book watercolor illustration, soft pastel colors, no text | ${characterAnchor}`;
-      images.push(enrichedImg);
+
+      // Illustration rules by age group:
+      // Ages 3-6:   every page gets an illustration
+      // Ages 7-9:   odd pages only (1, 3, 5, 7...) — every other page
+      // Ages 10-12: first page only
+      let includeIllustration = false;
+      if (ageGroup === 'Ages 3–6') {
+        includeIllustration = true;
+      } else if (ageGroup === 'Ages 7–9') {
+        includeIllustration = p.pageNum % 2 !== 0; // odd pages only
+      } else if (ageGroup === 'Ages 10–12') {
+        includeIllustration = p.pageNum === 1;
+      }
+
+      if (includeIllustration) {
+        const enrichedImg = p.img
+          ? `${p.img} | ${characterAnchor} | no text, no words`
+          : `${bible.hero}, ${setting}, children's book watercolor illustration, soft pastel colors, no text | ${characterAnchor}`;
+        images.push(enrichedImg);
+      } else {
+        // Push null so the images array index stays aligned with page number
+        images.push(null);
+      }
     });
 
     return res.status(200).json({
