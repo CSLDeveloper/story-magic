@@ -50,30 +50,45 @@ function StarField() {
 }
 
 // Build Pollinations image URL from description
-function imageUrl(description, pageNum) {
-  const style = 'cute colorful childrens book illustration watercolor style';
-  const prompt = encodeURIComponent(`${description}, ${style}`);
-  return `https://image.pollinations.ai/prompt/${prompt}?width=512&height=384&seed=${pageNum}&nologo=true`;
+function imageUrl(description, pageNum, attempt = 0) {
+  const style = 'childrens book illustration colorful watercolor cute friendly';
+  const fullPrompt = `${description}, ${style}`;
+  const encoded = encodeURIComponent(fullPrompt);
+  const seed = (pageNum * 7) + (attempt * 31);
+  return `https://image.pollinations.ai/prompt/${encoded}?width=512&height=384&seed=${seed}&nologo=true&enhance=false&model=flux`;
 }
 
-function IllustrationBlock({ description, pageNum, imgLoaded, setImgLoaded }) {
-  const [status, setStatus] = useState('loading'); // loading | loaded | error
-  const [retryCount, setRetryCount] = useState(0);
+function IllustrationBlock({ description, pageNum }) {
+  const [status, setStatus] = useState('loading');
+  const [attempt, setAttempt] = useState(0);
+  const [timedOut, setTimedOut] = useState(false);
+  const timeoutRef = useRef(null);
 
-  const src = description
-    ? imageUrl(description, pageNum + retryCount * 100)
-    : null;
+  const src = description ? imageUrl(description, pageNum, attempt) : null;
 
   useEffect(() => {
     setStatus('loading');
-  }, [pageNum]);
+    setTimedOut(false);
+    clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => {
+      setTimedOut(true);
+      setStatus('error');
+    }, 35000);
+    return () => clearTimeout(timeoutRef.current);
+  }, [pageNum, attempt]);
+
+  const retry = () => {
+    setAttempt(a => a + 1);
+    setStatus('loading');
+    setTimedOut(false);
+  };
 
   if (!src) {
     return (
       <div style={illStyles.wrapper}>
         <div style={illStyles.placeholder}>
           <span style={{ fontSize: '2.5rem' }}>🎨</span>
-          <span style={illStyles.label}>Illustration coming soon</span>
+          <span style={illStyles.label}>No illustration for this page</span>
         </div>
       </div>
     );
@@ -85,23 +100,18 @@ function IllustrationBlock({ description, pageNum, imgLoaded, setImgLoaded }) {
         <div style={illStyles.placeholder}>
           <span style={{ fontSize: '2rem', animation: 'spin 2s linear infinite', display: 'block' }}>🎨</span>
           <span style={illStyles.label}>Painting your illustration...</span>
-          <span style={{ ...illStyles.label, fontSize: '0.72rem', opacity: 0.6 }}>This can take up to 20 seconds</span>
+          <span style={{ ...illStyles.label, fontSize: '0.72rem', opacity: 0.6 }}>This can take 15–30 seconds</span>
         </div>
       )}
       {status === 'error' && (
         <div style={illStyles.placeholder}>
           <span style={{ fontSize: '2rem' }}>😕</span>
-          <span style={illStyles.label}>Illustration didn&apos;t load</span>
-          <button
-            onClick={() => { setRetryCount(c => c + 1); setStatus('loading'); }}
-            style={illStyles.retryBtn}
-          >
-            🔄 Try Again
-          </button>
+          <span style={illStyles.label}>{timedOut ? 'Taking too long...' : 'Could not load illustration'}</span>
+          <button onClick={retry} style={illStyles.retryBtn}>🔄 Try Again</button>
         </div>
       )}
       <img
-        key={`${pageNum}-${retryCount}`}
+        key={`${pageNum}-${attempt}`}
         src={src}
         alt={`Illustration for page ${pageNum}`}
         style={{
@@ -111,8 +121,8 @@ function IllustrationBlock({ description, pageNum, imgLoaded, setImgLoaded }) {
           maxHeight: 280,
           objectFit: 'cover',
         }}
-        onLoad={() => setStatus('loaded')}
-        onError={() => setStatus('error')}
+        onLoad={() => { clearTimeout(timeoutRef.current); setStatus('loaded'); }}
+        onError={() => { clearTimeout(timeoutRef.current); setStatus('error'); }}
       />
     </div>
   );
@@ -222,12 +232,12 @@ export default function Home() {
       return;
     }
 
-    // Build the text to read
+    // Build the text to read — no page numbers spoken
     let text = '';
     if (currentPage === 0) {
       text = `${storyData.title}. A story about ${answers.heroName}.`;
     } else if (storyData.pages[currentPage - 1]) {
-      text = `Page ${currentPage}. ${storyData.pages[currentPage - 1].text}`;
+      text = storyData.pages[currentPage - 1].text;
     }
     if (!text) return;
 
