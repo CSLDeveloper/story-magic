@@ -3,33 +3,50 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { description, pageNum, attempt = 0 } = req.body;
+  const { description, pageNum } = req.body;
   if (!description) return res.status(400).json({ error: 'Description required' });
 
-  const style = 'childrens book illustration colorful watercolor cute friendly';
-  const fullPrompt = `${description}, ${style}`;
-  const encoded = encodeURIComponent(fullPrompt);
-  const seed = (pageNum * 7) + (attempt * 31);
-  const url = `https://image.pollinations.ai/prompt/${encoded}?width=512&height=384&seed=${seed}&nologo=true&enhance=false&model=flux`;
+  const apiKey = process.env.STABILITY_API_KEY;
+  if (!apiKey) {
+    return res.status(500).json({ error: 'Stability API key not configured' });
+  }
+
+  const prompt = `Children's book illustration, watercolor style, soft colors, cute and friendly, ${description}. No text, no words, storybook art.`;
 
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 40000);
+    const response = await fetch(
+      'https://api.stability.ai/v2beta/stable-image/generate/core',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Accept': 'image/*',
+        },
+        body: (() => {
+          const form = new FormData();
+          form.append('prompt', prompt);
+          form.append('negative_prompt', 'text, words, letters, scary, dark, violent, ugly, realistic, photo');
+          form.append('aspect_ratio', '4:3');
+          form.append('style_preset', 'fantasy-art');
+          form.append('seed', String((pageNum * 7919) % 4294967295));
+          form.append('output_format', 'jpeg');
+          return form;
+        })(),
+      }
+    );
 
-    const imgRes = await fetch(url, { signal: controller.signal });
-    clearTimeout(timeout);
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Stability API error ${response.status}: ${errText}`);
+    }
 
-    if (!imgRes.ok) throw new Error(`Pollinations returned ${imgRes.status}`);
-
-    const contentType = imgRes.headers.get('content-type') || 'image/jpeg';
-    const buffer = await imgRes.arrayBuffer();
-
-    res.setHeader('Content-Type', contentType);
+    const imageBuffer = await response.arrayBuffer();
+    res.setHeader('Content-Type', 'image/jpeg');
     res.setHeader('Cache-Control', 'public, max-age=86400');
-    res.send(Buffer.from(buffer));
+    res.send(Buffer.from(imageBuffer));
 
-  } catch (err) {
-    console.error('Illustration error:', err.message);
-    res.status(500).json({ error: err.message });
+  } catch (error) {
+    console.error('Stability AI error:', error);
+    res.status(500).json({ error: error.message });
   }
 }
