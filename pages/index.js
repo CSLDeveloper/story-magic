@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Head from 'next/head';
 
@@ -52,14 +51,14 @@ function StarField() {
 
 // Scene elements keyed to story variables
 // Fetch one illustration and return a blob URL
-async function fetchIllustration(description, pageNum) {
+async function fetchIllustration(description, pageNum, storyId, heroPortraitPrompt, sidekickPortraitPrompt) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 50000);
+  const timeout = setTimeout(() => controller.abort(), 60000);
   try {
     const res = await fetch('/api/illustrate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ description, pageNum }),
+      body: JSON.stringify({ description, pageNum, storyId, heroPortraitPrompt, sidekickPortraitPrompt }),
       signal: controller.signal,
     });
     clearTimeout(timeout);
@@ -72,7 +71,7 @@ async function fetchIllustration(description, pageNum) {
   }
 }
 
-function IllustrationBlock({ cachedSrc, description, pageNum, onRetry }) {
+function IllustrationBlock({ cachedSrc, description, pageNum, storyId, heroPortraitPrompt, sidekickPortraitPrompt, onRetry }) {
   const [retrying, setRetrying] = useState(false);
   const [retrySrc, setRetrySrc] = useState(null);
 
@@ -82,7 +81,7 @@ function IllustrationBlock({ cachedSrc, description, pageNum, onRetry }) {
   const handleRetry = async () => {
     setRetrying(true);
     setRetrySrc(null);
-    const newSrc = await fetchIllustration(description, pageNum);
+    const newSrc = await fetchIllustration(description, pageNum, storyId, heroPortraitPrompt, sidekickPortraitPrompt);
     setRetrySrc(newSrc);
     setRetrying(false);
     if (newSrc && onRetry) onRetry(pageNum, newSrc);
@@ -235,10 +234,14 @@ export default function Home() {
       if (!description) return;
 
       fetchingRef.current.add(p);
-      const src = await fetchIllustration(description, p);
+      const src = await fetchIllustration(
+        description,
+        p,
+        storyData.storyId,
+        storyData.heroPortraitPrompt,
+        storyData.sidekickPortraitPrompt
+      );
       fetchingRef.current.delete(p);
-
-      // src is either a blob URL string or null (failed)
       setImgCache(prev => ({ ...prev, [p]: src }));
     });
   }, [currentPage, screen, storyData]);
@@ -342,7 +345,13 @@ export default function Home() {
       if (!res.ok) throw new Error(data.error || 'Something went wrong');
 
       const { title, pages } = parsePages(data.story);
-      setStoryData({ title, pages, images: data.images || [] });
+      setStoryData({
+        title, pages,
+        images: data.images || [],
+        storyId: data.storyId || `story_${Date.now()}`,
+        heroPortraitPrompt: data.heroPortraitPrompt || '',
+        sidekickPortraitPrompt: data.sidekickPortraitPrompt || '',
+      });
       setCurrentPage(0);
       setScreen('story');
     } catch (err) {
@@ -565,6 +574,9 @@ export default function Home() {
                           cachedSrc={imgCache[currentPage]}
                           description={storyData.images[currentPage - 1]}
                           pageNum={currentPage}
+                          storyId={storyData.storyId}
+                          heroPortraitPrompt={storyData.heroPortraitPrompt}
+                          sidekickPortraitPrompt={storyData.sidekickPortraitPrompt}
                           onRetry={(p, src) => setImgCache(prev => ({ ...prev, [p]: src }))}
                         />
                       </div>
