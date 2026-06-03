@@ -50,61 +50,96 @@ function StarField() {
 }
 
 // Scene elements keyed to story variables
-function IllustrationBlock({ description, pageNum }) {
-  const [status, setStatus] = useState('loading');
-  const [attempt, setAttempt] = useState(0);
-  const [src, setSrc] = useState(null);
-
-  useEffect(() => {
-    if (!description) { setStatus('none'); return; }
-    setStatus('loading');
-    setSrc(null);
-
-    let cancelled = false;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 45000);
-
-    fetch('/api/illustrate', {
+// Fetch one illustration and return a blob URL
+async function fetchIllustration(description, pageNum) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 50000);
+  try {
+    const res = await fetch('/api/illustrate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ description, pageNum, attempt }),
+      body: JSON.stringify({ description, pageNum }),
       signal: controller.signal,
-    })
-      .then(res => { if (!res.ok) throw new Error('Failed'); return res.blob(); })
-      .then(blob => {
-        clearTimeout(timeout);
-        if (!cancelled) { setSrc(URL.createObjectURL(blob)); setStatus('loaded'); }
-      })
-      .catch(() => { clearTimeout(timeout); if (!cancelled) setStatus('error'); });
+    });
+    clearTimeout(timeout);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+  } catch {
+    clearTimeout(timeout);
+    return null;
+  }
+}
 
-    return () => { cancelled = true; controller.abort(); clearTimeout(timeout); };
-  }, [pageNum, attempt, description]);
+function IllustrationBlock({ cachedSrc, description, pageNum, onRetry }) {
+  const [retrying, setRetrying] = useState(false);
+  const [retrySrc, setRetrySrc] = useState(null);
 
-  const retry = () => { setAttempt(a => a + 1); setStatus('loading'); setSrc(null); };
+  const src = retrySrc || cachedSrc;
+  const status = retrying ? 'loading' : src ? 'loaded' : cachedSrc === null ? 'error' : 'loading';
 
-  if (status === 'none' || !description) return null;
+  const handleRetry = async () => {
+    setRetrying(true);
+    setRetrySrc(null);
+    const newSrc = await fetchIllustration(description, pageNum);
+    setRetrySrc(newSrc);
+    setRetrying(false);
+    if (newSrc && onRetry) onRetry(pageNum, newSrc);
+  };
+
+  if (!description) return null;
 
   return (
-    <div style={{ marginBottom: 20, borderRadius: 12, overflow: 'hidden', background: '#e8e0f8', minHeight: 180 }}>
+    <div style={{ marginBottom: 20, borderRadius: 16, overflow: 'hidden', background: 'linear-gradient(135deg,#ede9fe,#fce7f3)', minHeight: 200, position: 'relative' }}>
       {status === 'loading' && (
-        <div style={{ height: 180, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-          <span style={{ fontSize: '2rem', animation: 'spin 2s linear infinite', display: 'block' }}>🎨</span>
-          <span style={{ color: '#7c3aed', fontSize: '0.85rem', fontWeight: 700 }}>Painting your illustration...</span>
-          <span style={{ color: '#7c3aed', fontSize: '0.72rem', opacity: 0.6 }}>Takes about 5 seconds</span>
+        <div style={{ height: 200, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+          <div style={{ position: 'relative', width: 60, height: 60 }}>
+            <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', border: '3px solid #c084fc', borderTopColor: 'transparent', animation: 'spin 1s linear infinite' }} />
+            <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.6rem' }}>🎨</span>
+          </div>
+          <span style={{ color: '#7c3aed', fontSize: '0.85rem', fontWeight: 700 }}>Painting illustration...</span>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {[0,1,2].map(i => (
+              <div key={i} style={{ width: 6, height: 6, borderRadius: '50%', background: '#c084fc', animation: `bounce 1.2s ${i*0.2}s infinite alternate` }} />
+            ))}
+          </div>
         </div>
       )}
       {status === 'error' && (
-        <div style={{ height: 180, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+        <div style={{ height: 200, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
           <span style={{ fontSize: '2rem' }}>😕</span>
           <span style={{ color: '#7c3aed', fontSize: '0.85rem', fontWeight: 700 }}>Could not load illustration</span>
-          <button onClick={retry} style={{ background: '#c084fc', border: 'none', borderRadius: 8, padding: '6px 16px', color: 'white', cursor: 'pointer', fontWeight: 700, fontSize: '0.85rem' }}>
+          <button onClick={handleRetry} style={{ background: 'linear-gradient(135deg,#c084fc,#818cf8)', border: 'none', borderRadius: 10, padding: '7px 18px', color: 'white', cursor: 'pointer', fontWeight: 700, fontSize: '0.85rem' }}>
             🔄 Try Again
           </button>
         </div>
       )}
       {status === 'loaded' && src && (
-        <img src={src} alt={`Illustration for page ${pageNum}`}
-          style={{ width: '100%', display: 'block', borderRadius: 12, maxHeight: 280, objectFit: 'cover' }} />
+        <div style={{ position: 'relative', overflow: 'hidden', borderRadius: 16 }}>
+          <img
+            src={src}
+            alt={`Illustration for page ${pageNum}`}
+            style={{
+              width: '100%', display: 'block', maxHeight: 290, objectFit: 'cover',
+              animation: 'illReveal 0.8s ease forwards',
+            }}
+          />
+          {/* Subtle shimmer overlay */}
+          <div style={{
+            position: 'absolute', inset: 0, borderRadius: 16,
+            background: 'linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.08) 50%, transparent 60%)',
+            animation: 'shimmer 4s 1s infinite',
+            pointerEvents: 'none',
+          }} />
+          {/* Gentle float effect via transform on parent */}
+          <div style={{
+            position: 'absolute', bottom: 8, right: 10,
+            background: 'rgba(255,255,255,0.75)', borderRadius: 20,
+            padding: '2px 10px', fontSize: '0.72rem', color: '#7c3aed', fontWeight: 700,
+          }}>
+            ✨ illustrated
+          </div>
+        </div>
       )}
     </div>
   );
@@ -156,10 +191,14 @@ export default function Home() {
   const [loadingMsg, setLoadingMsg] = useState(LOADING_MSGS[0]);
   const [errorMsg, setErrorMsg]     = useState('');
   const [currentPage, setCurrentPage] = useState(0); // 0 = title page
-  const [isReading, setIsReading]   = useState(false);
+  const [isReading, setIsReading]     = useState(false);
   const [readLoading, setReadLoading] = useState(false);
-  const audioRef = useRef(null);
-  const inputRef = useRef(null);
+  const audioRef  = useRef(null);
+  const inputRef  = useRef(null);
+  // Image cache: { [pageNum]: blobUrl | null }
+  // null means fetch failed, undefined means not yet fetched
+  const [imgCache, setImgCache]       = useState({});
+  const fetchingRef = useRef(new Set()); // track in-flight fetches
 
   useEffect(() => {
     if (screen !== 'loading') return;
@@ -181,6 +220,27 @@ export default function Home() {
   useEffect(() => {
     stopReading();
   }, [currentPage]);
+
+  // Background image preloader — fetch current + next 2 pages ahead
+  useEffect(() => {
+    if (screen !== 'story' || !storyData) return;
+
+    const pagesToFetch = [currentPage, currentPage + 1, currentPage + 2]
+      .filter(p => p >= 1 && p <= storyData.pages.length)
+      .filter(p => imgCache[p] === undefined && !fetchingRef.current.has(p));
+
+    pagesToFetch.forEach(async (p) => {
+      const description = storyData.images[p - 1];
+      if (!description) return;
+
+      fetchingRef.current.add(p);
+      const src = await fetchIllustration(description, p);
+      fetchingRef.current.delete(p);
+
+      // src is either a blob URL string or null (failed)
+      setImgCache(prev => ({ ...prev, [p]: src }));
+    });
+  }, [currentPage, screen, storyData]);
 
   const stopReading = () => {
     if (audioRef.current) {
@@ -299,6 +359,8 @@ export default function Home() {
     setStoryData(null);
     setErrorMsg('');
     setCurrentPage(0);
+    setImgCache({});
+    fetchingRef.current = new Set();
   };
 
   const currentStep = STEPS[stepIndex];
@@ -319,6 +381,9 @@ export default function Home() {
         @keyframes cardIn { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:none} }
         @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
         @keyframes fadeIn { from{opacity:0} to{opacity:1} }
+        @keyframes illReveal { from{opacity:0;transform:scale(1.03)} to{opacity:1;transform:scale(1)} }
+        @keyframes shimmer { 0%{background-position:-200% center} 100%{background-position:200% center} }
+        @keyframes floatIll { 0%,100%{transform:translateY(0px)} 50%{transform:translateY(-5px)} }
         .choice-btn:hover { background: rgba(192,132,252,0.25) !important; border-color: #c084fc !important; transform: translateY(-2px); }
         .choice-btn:active { transform: scale(0.97) !important; }
         .main-btn:hover { transform: translateY(-2px); filter: brightness(1.08); }
@@ -475,11 +540,15 @@ export default function Home() {
               {/* Story pages */}
               {currentPage > 0 && storyData.pages[currentPage - 1] && (
                 <div style={{ animation: 'fadeIn 0.35s ease' }}>
-                  {/* Illustration */}
-                  <IllustrationBlock
-                    description={storyData.images[currentPage - 1]}
-                    pageNum={currentPage}
-                  />
+                  {/* Illustration — uses preloaded cache */}
+                  <div style={{ animation: imgCache[currentPage] ? 'floatIll 4s ease-in-out infinite' : 'none' }}>
+                    <IllustrationBlock
+                      cachedSrc={imgCache[currentPage]}
+                      description={storyData.images[currentPage - 1]}
+                      pageNum={currentPage}
+                      onRetry={(p, src) => setImgCache(prev => ({ ...prev, [p]: src }))}
+                    />
+                  </div>
 
                   {/* Page number badge */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
