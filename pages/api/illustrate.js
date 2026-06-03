@@ -90,29 +90,28 @@ export default async function handler(req, res) {
       imageBuffer = heroBuffer;
 
     } else {
-      // Pages 2+ — ONE image-to-image call anchored to the hero portrait
-      // The sidekick is included via the scene description text prompt,
-      // not as a second reference image (which caused the overwrite bug)
-      const cached = portraitCache.get(storyId);
+      // Pages 2+ — wait for portrait cache to be populated by page 1
+      // Poll up to 30 seconds in case page 1 is still generating
+      let cached = portraitCache.get(storyId);
+      if (!cached?.hero) {
+        for (let attempt = 0; attempt < 30; attempt++) {
+          await new Promise(r => setTimeout(r, 1000));
+          cached = portraitCache.get(storyId);
+          if (cached?.hero) break;
+        }
+      }
 
       if (cached?.hero) {
-        // Build an enriched prompt that explicitly names both characters' appearances
-        // so the model knows what both should look like even though we only
-        // pass the hero image as the visual anchor
         let enrichedPrompt = description;
-
         if (cached.sidekick && sidekickPortraitPrompt) {
-          // Extract the core sidekick description from the portrait prompt
-          // (strip the "full body portrait, neutral pose..." suffix)
           const sidekickDesc = sidekickPortraitPrompt
             .replace(/, full body character portrait.*$/i, '')
             .trim();
           enrichedPrompt = `${description} The sidekick companion looks like: ${sidekickDesc}.`;
         }
-
         imageBuffer = await generateImage(apiKey, enrichedPrompt, cached.hero, 0.60);
       } else {
-        // No cache — plain text-to-image fallback
+        // Portrait never arrived — plain text-to-image fallback
         imageBuffer = await generateImage(apiKey, description);
       }
     }
