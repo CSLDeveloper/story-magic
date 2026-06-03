@@ -2,14 +2,15 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import Head from 'next/head';
 
 const STEPS = [
-  { id: 'heroName',  emoji: '🧒', label: 'Your Hero',     question: "What's your hero's name?",            type: 'text',   placeholder: 'e.g. Luna, Max, Zara...' },
-  { id: 'gender',    emoji: '⭐', label: 'Hero Gender',   question: 'Is your hero a boy or a girl?',        type: 'choice', choices: ['Boy', 'Girl'] },
-  { id: 'heroType',  emoji: '🦸', label: 'Hero Type',     question: 'What kind of hero are they?',          type: 'choice', choices: ['A brave knight', 'A clever wizard', 'A space explorer', 'A magical fairy', 'A talking animal', 'A superhero kid'] },
-  { id: 'sidekick',  emoji: '🐾', label: 'Sidekick',      question: "What's their sidekick?",               type: 'choice', choices: ['A talking dragon', 'A robot dog', 'A tiny unicorn', 'A wise old owl', 'A mischievous cat', 'A friendly giant'] },
-  { id: 'setting',   emoji: '🌍', label: 'World',         question: 'Where does the story take place?',     type: 'choice', choices: ['An enchanted forest', 'Outer space', 'An underwater kingdom', 'A candy land', "A giant's castle", 'A secret underground city'] },
-  { id: 'power',     emoji: '✨', label: 'Special Power', question: "What's your hero's special power?",    type: 'choice', choices: ['Can talk to animals', 'Can fly super fast', 'Has super strength', 'Can turn invisible', 'Controls the weather', 'Can shrink or grow'] },
-  { id: 'villain',   emoji: '😈', label: 'The Baddie',    question: 'Who is the villain they must defeat?', type: 'choice', choices: ['An evil shadow queen', 'A grumpy troll king', 'A sneaky sorcerer', 'A robot overlord', 'A mean sea monster', 'A jealous witch'] },
-  { id: 'lesson',    emoji: '💡', label: 'Story Lesson',  question: 'What lesson should the story teach?',  type: 'choice', choices: ['Friendship is powerful', 'Be brave, not perfect', 'Kindness always wins', 'Never give up', 'Everyone belongs', "It's okay to ask for help"] },
+  { id: 'ageGroup',  emoji: '🎂', label: 'Age Group',    question: 'How old is the reader?',               type: 'choice', choices: ['Ages 3–6', 'Ages 7–9', 'Ages 10–12'] },
+  { id: 'heroName',  emoji: '🧒', label: 'Your Hero',    question: "What's your hero's name?",             type: 'text',   placeholder: 'e.g. Luna, Max, Zara...' },
+  { id: 'gender',    emoji: '⭐', label: 'Hero Gender',  question: 'Is your hero a boy or a girl?',        type: 'choice', choices: ['Boy', 'Girl'] },
+  { id: 'heroType',  emoji: '🦸', label: 'Hero Type',    question: 'What kind of hero are they?',          type: 'choice', choices: ['A brave knight', 'A clever wizard', 'A space explorer', 'A magical fairy', 'A talking animal', 'A superhero kid'] },
+  { id: 'sidekick',  emoji: '🐾', label: 'Sidekick',     question: "What's their sidekick?",               type: 'choice', choices: ['A talking dragon', 'A robot dog', 'A tiny unicorn', 'A wise old owl', 'A mischievous cat', 'A friendly giant'] },
+  { id: 'setting',   emoji: '🌍', label: 'World',        question: 'Where does the story take place?',     type: 'choice', choices: ['An enchanted forest', 'Outer space', 'An underwater kingdom', 'A candy land', "A giant's castle", 'A secret underground city'] },
+  { id: 'power',     emoji: '✨', label: 'Special Power',question: "What's your hero's special power?",    type: 'choice', choices: ['Can talk to animals', 'Can fly super fast', 'Has super strength', 'Can turn invisible', 'Controls the weather', 'Can shrink or grow'] },
+  { id: 'villain',   emoji: '😈', label: 'The Baddie',   question: 'Who is the villain they must defeat?', type: 'choice', choices: ['An evil shadow queen', 'A grumpy troll king', 'A sneaky sorcerer', 'A robot overlord', 'A mean sea monster', 'A jealous witch'] },
+  { id: 'lesson',    emoji: '💡', label: 'Story Lesson', question: 'What lesson should the story teach?',  type: 'choice', choices: ['Friendship is powerful', 'Be brave, not perfect', 'Kindness always wins', 'Never give up', 'Everyone belongs', "It's okay to ask for help"] },
 ];
 
 const LOADING_MSGS = [
@@ -22,8 +23,8 @@ const LOADING_MSGS = [
   '🌈 Almost ready!',
 ];
 
-const EMOJIS = { heroName:'🧒', gender:'⭐', heroType:'🦸', sidekick:'🐾', setting:'🌍', power:'✨', villain:'😈', lesson:'💡' };
-const LABELS = { heroName:'Hero', gender:'Gender', heroType:'Type', sidekick:'Sidekick', setting:'World', power:'Power', villain:'Villain', lesson:'Lesson' };
+const EMOJIS = { ageGroup:'🎂', heroName:'🧒', gender:'⭐', heroType:'🦸', sidekick:'🐾', setting:'🌍', power:'✨', villain:'😈', lesson:'💡' };
+const LABELS = { ageGroup:'Age Group', heroName:'Hero', gender:'Gender', heroType:'Type', sidekick:'Sidekick', setting:'World', power:'Power', villain:'Villain', lesson:'Lesson' };
 
 function StarField() {
   const stars = Array.from({ length: 35 }, (_, i) => ({
@@ -54,6 +55,82 @@ function imageUrl(description, pageNum) {
   const prompt = encodeURIComponent(`${description}, ${style}`);
   return `https://image.pollinations.ai/prompt/${prompt}?width=512&height=384&seed=${pageNum}&nologo=true`;
 }
+
+function IllustrationBlock({ description, pageNum, imgLoaded, setImgLoaded }) {
+  const [status, setStatus] = useState('loading'); // loading | loaded | error
+  const [retryCount, setRetryCount] = useState(0);
+
+  const src = description
+    ? imageUrl(description, pageNum + retryCount * 100)
+    : null;
+
+  useEffect(() => {
+    setStatus('loading');
+  }, [pageNum]);
+
+  if (!src) {
+    return (
+      <div style={illStyles.wrapper}>
+        <div style={illStyles.placeholder}>
+          <span style={{ fontSize: '2.5rem' }}>🎨</span>
+          <span style={illStyles.label}>Illustration coming soon</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={illStyles.wrapper}>
+      {status === 'loading' && (
+        <div style={illStyles.placeholder}>
+          <span style={{ fontSize: '2rem', animation: 'spin 2s linear infinite', display: 'block' }}>🎨</span>
+          <span style={illStyles.label}>Painting your illustration...</span>
+          <span style={{ ...illStyles.label, fontSize: '0.72rem', opacity: 0.6 }}>This can take up to 20 seconds</span>
+        </div>
+      )}
+      {status === 'error' && (
+        <div style={illStyles.placeholder}>
+          <span style={{ fontSize: '2rem' }}>😕</span>
+          <span style={illStyles.label}>Illustration didn&apos;t load</span>
+          <button
+            onClick={() => { setRetryCount(c => c + 1); setStatus('loading'); }}
+            style={illStyles.retryBtn}
+          >
+            🔄 Try Again
+          </button>
+        </div>
+      )}
+      <img
+        key={`${pageNum}-${retryCount}`}
+        src={src}
+        alt={`Illustration for page ${pageNum}`}
+        style={{
+          width: '100%',
+          display: status === 'loaded' ? 'block' : 'none',
+          borderRadius: 12,
+          maxHeight: 280,
+          objectFit: 'cover',
+        }}
+        onLoad={() => setStatus('loaded')}
+        onError={() => setStatus('error')}
+      />
+    </div>
+  );
+}
+
+const illStyles = {
+  wrapper: { marginBottom: 20, borderRadius: 12, overflow: 'hidden', background: '#e8e0f8', minHeight: 180 },
+  placeholder: {
+    height: 180, display: 'flex', flexDirection: 'column',
+    alignItems: 'center', justifyContent: 'center', gap: 8,
+  },
+  label: { color: '#7c3aed', fontSize: '0.85rem', fontWeight: 700, fontFamily: "'Nunito', sans-serif" },
+  retryBtn: {
+    background: '#c084fc', border: 'none', borderRadius: 8,
+    padding: '6px 16px', color: 'white', cursor: 'pointer',
+    fontFamily: "'Nunito', sans-serif", fontWeight: 700, fontSize: '0.85rem', marginTop: 4,
+  },
+};
 
 // Parse story into pages: [{pageNum, text}]
 function parsePages(storyText) {
@@ -101,7 +178,6 @@ export default function Home() {
   const [errorMsg, setErrorMsg]     = useState('');
   const [currentPage, setCurrentPage] = useState(0); // 0 = title page
   const [isReading, setIsReading]   = useState(false);
-  const [imgLoaded, setImgLoaded]   = useState({});
   const inputRef = useRef(null);
   const speechRef = useRef(null);
 
@@ -218,7 +294,6 @@ export default function Home() {
     setStoryData(null);
     setErrorMsg('');
     setCurrentPage(0);
-    setImgLoaded({});
   };
 
   const currentStep = STEPS[stepIndex];
@@ -260,7 +335,7 @@ export default function Home() {
           <div style={styles.card}>
             <span style={styles.bigEmoji}>📚</span>
             <h1 style={styles.h1}>Story Magic!</h1>
-            <p style={styles.sub}>Answer 8 fun questions and I&apos;ll write YOUR very own magical illustrated adventure story — just for you! 🌟</p>
+            <p style={styles.sub}>Answer 9 fun questions and I&apos;ll write YOUR very own magical illustrated adventure story — perfectly matched to your age! 🌟</p>
             <button className="main-btn" style={styles.btn} onClick={() => { setStepIndex(0); setAnswers({}); setScreen('questions'); }}>
               Start My Story! ✨
             </button>
@@ -295,6 +370,33 @@ export default function Home() {
                 <button className="main-btn" style={styles.btn} onClick={() => { if (textInput.trim()) handleAnswer(textInput.trim()); }} disabled={!textInput.trim()}>
                   Next ➡️
                 </button>
+              </div>
+            ) : currentStep.id === 'ageGroup' ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 12 }}>
+                {[
+                  { label: 'Ages 3–6', emoji: '🌟', desc: 'Simple words, short pages, 12 pages' },
+                  { label: 'Ages 7–9', emoji: '📖', desc: 'Richer story, longer pages, 15 pages' },
+                  { label: 'Ages 10–12', emoji: '🚀', desc: 'Full adventure, detailed, 20–25 pages' },
+                ].map(opt => (
+                  <button key={opt.label} className="choice-btn" onClick={() => handleAnswer(opt.label)}
+                    style={{ ...styles.choiceBtn, display: 'flex', alignItems: 'center', gap: 14, padding: '14px 18px', textAlign: 'left' }}>
+                    <span style={{ fontSize: '1.8rem', lineHeight: 1 }}>{opt.emoji}</span>
+                    <span>
+                      <span style={{ display: 'block', fontSize: '1rem', fontWeight: 800 }}>{opt.label}</span>
+                      <span style={{ display: 'block', fontSize: '0.78rem', opacity: 0.65, fontWeight: 400, marginTop: 2 }}>{opt.desc}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : currentStep.id === 'gender' ? (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
+                {['Boy', 'Girl'].map(choice => (
+                  <button key={choice} className="choice-btn"
+                    style={{ ...styles.choiceBtn, padding: '18px 12px', fontSize: '1.05rem' }}
+                    onClick={() => handleAnswer(choice)}>
+                    {choice === 'Boy' ? '👦 Boy' : '👧 Girl'}
+                  </button>
+                ))}
               </div>
             ) : (
               <div style={{
@@ -369,27 +471,10 @@ export default function Home() {
               {currentPage > 0 && storyData.pages[currentPage - 1] && (
                 <div style={{ animation: 'fadeIn 0.35s ease' }}>
                   {/* Illustration */}
-                  <div style={{ marginBottom: 20, borderRadius: 12, overflow: 'hidden', background: '#e8e0f8', minHeight: 200 }}>
-                    {storyData.images[currentPage - 1] ? (
-                      <div style={{ position: 'relative' }}>
-                        {!imgLoaded[currentPage] && (
-                          <div className="img-placeholder" style={{ height: 200 }}>🎨</div>
-                        )}
-                        <img
-                          src={imageUrl(storyData.images[currentPage - 1], currentPage)}
-                          alt={`Illustration for page ${currentPage}`}
-                          style={{
-                            width: '100%', display: imgLoaded[currentPage] ? 'block' : 'none',
-                            borderRadius: 12, maxHeight: 280, objectFit: 'cover',
-                          }}
-                          onLoad={() => setImgLoaded(prev => ({ ...prev, [currentPage]: true }))}
-                          onError={() => setImgLoaded(prev => ({ ...prev, [currentPage]: true }))}
-                        />
-                      </div>
-                    ) : (
-                      <div className="img-placeholder" style={{ height: 200 }}>🎨</div>
-                    )}
-                  </div>
+                  <IllustrationBlock
+                    description={storyData.images[currentPage - 1]}
+                    pageNum={currentPage}
+                  />
 
                   {/* Page number badge */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
