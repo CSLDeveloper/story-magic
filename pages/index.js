@@ -76,6 +76,8 @@ function IllustrationBlock({ cachedSrc, description, pageNum, storyId, heroPortr
   const [retrySrc, setRetrySrc] = useState(null);
 
   const src = retrySrc || cachedSrc;
+  // 'none' means this page intentionally has no illustration
+  if (cachedSrc === 'none') return null;
   const status = retrying ? 'loading' : src ? 'loaded' : cachedSrc === null ? 'error' : 'loading';
 
   const handleRetry = async () => {
@@ -231,7 +233,11 @@ export default function Home() {
 
     pagesToFetch.forEach(async (p) => {
       const description = storyData.images[p - 1];
-      if (!description) return;
+      // Skip pages with no illustration (null = intentionally no image for this age group)
+      if (!description) {
+        setImgCache(prev => ({ ...prev, [p]: 'none' }));
+        return;
+      }
 
       fetchingRef.current.add(p);
       const src = await fetchIllustration(
@@ -565,7 +571,7 @@ export default function Home() {
                       'zoomBreath 6s 0.5s ease-in-out infinite',
                       'floatIllSlow 4.5s 1s ease-in-out infinite',
                     ];
-                    const anim = imgCache[currentPage]
+                    const anim = (imgCache[currentPage] && imgCache[currentPage] !== 'none')
                       ? animations[currentPage % animations.length]
                       : 'none';
                     return (
