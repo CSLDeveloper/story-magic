@@ -20,7 +20,8 @@ const NEGATIVE_PROMPT = [
   'wrong species', 'mismatched character', 'inconsistent character',
 ].join(', ');
 
-async function generateImage(apiKey, prompt, referenceBuffer = null, strength = 0.65) {
+// Single Stability AI call — text-to-image or image-to-image
+async function generateImage(apiKey, prompt, referenceBuffer = null, strength = 0.60) {
   const form = new FormData();
   form.append('prompt', prompt);
   form.append('negative_prompt', NEGATIVE_PROMPT);
@@ -28,14 +29,12 @@ async function generateImage(apiKey, prompt, referenceBuffer = null, strength = 
   form.append('output_format', 'jpeg');
 
   if (referenceBuffer) {
-    // Image-to-image mode — anchor to reference portrait
     form.append('mode', 'image-to-image');
     form.append('strength', String(strength));
     form.append('image', new Blob([referenceBuffer], { type: 'image/jpeg' }), 'reference.jpg');
   } else {
-    // Text-to-image mode — for generating reference portraits
     form.append('aspect_ratio', '3:2');
-    form.append('seed', '42'); // Fixed seed for consistent portrait base
+    form.append('seed', '42');
   }
 
   const res = await fetch(STABILITY_URL, {
@@ -55,22 +54,6 @@ async function generateImage(apiKey, prompt, referenceBuffer = null, strength = 
   return Buffer.from(await res.arrayBuffer());
 }
 
-// Merge two image buffers by fetching a combined image-to-image pass
-// We use the hero as the primary reference and describe the sidekick in the prompt
-// This avoids needing a true multi-reference API call
-async function generateSceneWithBothCharacters(apiKey, scenePrompt, heroBuffer, sidekickBuffer) {
-  // First pass: anchor to hero portrait, include sidekick description in prompt
-  const firstPass = await generateImage(apiKey, scenePrompt, heroBuffer, 0.65);
-
-  // Second pass: lightly anchor to sidekick portrait to pull sidekick appearance in
-  // Use lower strength so the scene composition from pass 1 is preserved
-  const secondPass = await generateImage(apiKey, scenePrompt, sidekickBuffer, 0.35);
-
-  // Return second pass — it has hero DNA from pass 1 carried through the prompt,
-  // sidekick anchoring from pass 2, and the scene composition
-  return secondPass;
-}
-
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -88,7 +71,7 @@ export default async function handler(req, res) {
     let imageBuffer;
 
     if (pageNum === 1) {
-      // Page 1 — generate both reference portraits in parallel
+      // Page 1 — generate hero and sidekick portraits in parallel (text-to-image)
       const [heroBuffer, sidekickBuffer] = await Promise.all([
         generateImage(apiKey, heroPortraitPrompt || description),
         sidekickPortraitPrompt
@@ -96,33 +79,40 @@ export default async function handler(req, res) {
           : Promise.resolve(null),
       ]);
 
-      // Cache both portraits for subsequent pages
+      // Cache both portraits for the rest of the story
       portraitCache.set(storyId, {
         hero: heroBuffer,
         sidekick: sidekickBuffer,
         timestamp: Date.now(),
       });
 
-      // Page 1 shows the hero portrait as the illustration
+      // Page 1 shows the hero portrait
       imageBuffer = heroBuffer;
 
     } else {
-      // Pages 2+ — use cached portraits as anchors
+      // Pages 2+ — ONE image-to-image call anchored to the hero portrait
+      // The sidekick is included via the scene description text prompt,
+      // not as a second reference image (which caused the overwrite bug)
       const cached = portraitCache.get(storyId);
 
-      if (cached?.hero && cached?.sidekick) {
-        // Both portraits cached — do a two-pass blend
-        imageBuffer = await generateSceneWithBothCharacters(
-          apiKey,
-          description,
-          cached.hero,
-          cached.sidekick
-        );
-      } else if (cached?.hero) {
-        // Only hero portrait cached — anchor to hero
-        imageBuffer = await generateImage(apiKey, description, cached.hero, 0.65);
+      if (cached?.hero) {
+        // Build an enriched prompt that explicitly names both characters' appearances
+        // so the model knows what both should look like even though we only
+        // pass the hero image as the visual anchor
+        let enrichedPrompt = description;
+
+        if (cached.sidekick && sidekickPortraitPrompt) {
+          // Extract the core sidekick description from the portrait prompt
+          // (strip the "full body portrait, neutral pose..." suffix)
+          const sidekickDesc = sidekickPortraitPrompt
+            .replace(/, full body character portrait.*$/i, '')
+            .trim();
+          enrichedPrompt = `${description} The sidekick companion looks like: ${sidekickDesc}.`;
+        }
+
+        imageBuffer = await generateImage(apiKey, enrichedPrompt, cached.hero, 0.60);
       } else {
-        // No cache — fall back to text-to-image
+        // No cache — plain text-to-image fallback
         imageBuffer = await generateImage(apiKey, description);
       }
     }
