@@ -224,6 +224,7 @@ export default function Home() {
   }, [currentPage]);
 
   // Background image preloader — fetch current + next 2 pages ahead
+  // Pages 2+ wait until page 1 is cached (portrait must exist first)
   useEffect(() => {
     if (screen !== 'story' || !storyData) return;
 
@@ -231,11 +232,20 @@ export default function Home() {
       .filter(p => p >= 1 && p <= storyData.pages.length)
       .filter(p => imgCache[p] === undefined && !fetchingRef.current.has(p));
 
+    if (pagesToFetch.length === 0) return;
+
     pagesToFetch.forEach(async (p) => {
       const description = storyData.images[p - 1];
-      // Skip pages with no illustration (null = intentionally no image for this age group)
+
+      // No illustration for this page — mark immediately and skip
       if (!description) {
         setImgCache(prev => ({ ...prev, [p]: 'none' }));
+        return;
+      }
+
+      // Pages 2+ must wait for page 1 to finish so the portrait cache exists
+      if (p > 1 && imgCache[1] === undefined) {
+        // Page 1 not done yet — don't fetch yet, will retry when imgCache updates
         return;
       }
 
@@ -250,7 +260,8 @@ export default function Home() {
       fetchingRef.current.delete(p);
       setImgCache(prev => ({ ...prev, [p]: src }));
     });
-  }, [currentPage, screen, storyData]);
+  // imgCache in deps so effect re-runs when page 1 finishes and unblocks pages 2+
+  }, [currentPage, screen, storyData, imgCache]);
 
   const stopReading = () => {
     if (audioRef.current) {
