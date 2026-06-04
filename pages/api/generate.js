@@ -95,10 +95,7 @@ export default async function handler(req, res) {
   const heroDesc = gender === 'Girl' ? 'young girl hero' : 'young boy hero';
   const bible   = buildCharacterBible(heroName, gender, heroType, sidekick, villain);
 
-  // This block is prepended to every IMG prompt so every page has the same character anchor
-  const characterAnchor = `HERO always looks like: ${bible.hero}. SIDEKICK always looks like: ${bible.partner}. VILLAIN always looks like: ${bible.baddie}.`;
-
-  const prompt = `Write an exciting, imaginative children's story perfectly suited for ${ageGroup}.
+  const storyPrompt = `Write an exciting, imaginative children's story perfectly suited for ${ageGroup}.
 
 Story details:
 - Hero's name: ${heroName} — ${heroDesc}, ${heroType}
@@ -109,11 +106,6 @@ Story details:
 - Villain: ${villain}
 - Lesson/moral: ${lesson}
 
-CHARACTER APPEARANCE (use these exact descriptions whenever writing IMG prompts):
-- HERO: ${bible.hero}
-- SIDEKICK: ${bible.partner}
-- VILLAIN: ${bible.baddie}
-
 AGE GROUP REQUIREMENTS (${ageGroup}):
 - Number of pages: exactly ${config.pages} pages
 - Length per page: ${config.linesPerPage}
@@ -121,50 +113,34 @@ AGE GROUP REQUIREMENTS (${ageGroup}):
 - Story complexity: ${config.complexity}
 - Tone: ${config.tone}
 
-FORMATTING RULES — follow exactly:
+FORMATTING RULES:
 - Start with a creative story title on its own line
-- For each page use this exact format:
-
---- Page X ---
-[story text for this page]
-IMG: [illustration prompt for this page]
-
-CRITICAL RULES FOR IMG PROMPTS:
-- Write the IMG line immediately after each page's story text
-- Begin EVERY IMG with the exact character appearance description above for whichever characters appear on that page — copy it word for word
-- Then describe the KEY ACTION happening on that page (the specific moment, expression, body language)
-- Then name the exact location and lighting from the page text
-- End with: children's book watercolor illustration, soft pastel colors, no text
-- Length: 25-35 words
-- The character descriptions must be IDENTICAL across every page they appear on — never vary hair, clothing, or features
-
-Example of CORRECT IMG:
-IMG: ${bible.hero}, grinning and jumping with fists raised in triumph, ${setting}, golden afternoon sunlight, children's book watercolor illustration, soft pastel colors, no text
-
-Do NOT write a separate image section at the end — every IMG goes inline after its page.
+- Use "--- Page X ---" as a header for each page
+- Write ONLY the story text — no image descriptions, no IMG lines
+- Keep the story text clean and focused on the narrative
 
 Write the complete story now:`;
 
   try {
-    const message = await client.messages.create({
+    // --- PASS 1: Write the story ---
+    const storyMessage = await client.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: config.maxTokens,
-      messages: [{ role: 'user', content: prompt }],
+      messages: [{ role: 'user', content: storyPrompt }],
     });
 
-    const text = message.content
+    const storyText = storyMessage.content
       .filter(block => block.type === 'text')
       .map(block => block.text)
       .join('');
 
-    // Parse story pages and inline IMG prompts together
-    const lines = text.split('\n');
+    // Parse pages from the story text
+    const lines = storyText.split('\n');
     let title = '';
     let titleFound = false;
     const pages = [];
     let currentPageNum = null;
-    let currentText  = [];
-    let currentImg   = null;
+    let currentText = [];
 
     for (const line of lines) {
       const trimmed = line.trim();
@@ -179,17 +155,10 @@ Write the complete story now:`;
       const pageMatch = trimmed.match(/^---\s*Page\s*(\d+)\s*---/i);
       if (pageMatch) {
         if (currentPageNum !== null) {
-          pages.push({ pageNum: currentPageNum, text: currentText.join(' '), img: currentImg });
+          pages.push({ pageNum: currentPageNum, text: currentText.join(' ') });
         }
         currentPageNum = parseInt(pageMatch[1]);
         currentText = [];
-        currentImg  = null;
-        continue;
-      }
-
-      const imgMatch = trimmed.match(/^IMG:\s*(.+)/i);
-      if (imgMatch) {
-        currentImg = imgMatch[1].trim();
         continue;
       }
 
@@ -197,43 +166,94 @@ Write the complete story now:`;
         currentText.push(trimmed);
       }
     }
-
     if (currentPageNum !== null) {
-      pages.push({ pageNum: currentPageNum, text: currentText.join(' '), img: currentImg });
+      pages.push({ pageNum: currentPageNum, text: currentText.join(' ') });
     }
 
-    let storyText = title + '\n';
-    const images  = [];
+    // Determine which pages need illustrations
+    const illustratedPages = pages.filter(p => {
+      if (ageGroup === 'Ages 3–6') return true;
+      if (ageGroup === 'Ages 7–9') return p.pageNum % 2 !== 0;
+      if (ageGroup === 'Ages 10–12') return p.pageNum === 1;
+      return false;
+    });
+
+    // --- PASS 2: Write rich art director image prompts ---
+    // Only for pages that will actually be illustrated
+    const imagePromptRequest = illustratedPages.map(p =>
+      `PAGE ${p.pageNum}: ${p.text}`
+    ).join('\n\n');
+
+    const imagePrompt = `You are an art director briefing a professional children's book illustrator.
+
+You have a story with these characters:
+- HERO: ${bible.hero}
+- SIDEKICK: ${bible.partner}  
+- VILLAIN: ${bible.baddie}
+- SETTING: ${setting}
+- ART STYLE: Warm watercolor children's book illustration, soft pastel colors, expressive faces, cinematic lighting, storybook quality
+
+Here are the story pages that need illustrations:
+
+${imagePromptRequest}
+
+For EACH page write a rich, detailed illustration prompt (40-60 words) that:
+1. Starts with the exact character appearance (copy verbatim from above for any character on this page)
+2. Describes the precise ACTION and EMOTION — what are they doing, what expression do they have, body language
+3. Describes the BACKGROUND in detail — time of day, weather, specific environmental elements from the page text
+4. Describes the LIGHTING and MOOD — magical glow, dramatic shadows, warm sunlight, etc.
+5. Ends with the art style
+
+Format each as:
+PAGE X: [prompt]
+
+Write ONLY the prompts, nothing else.`;
+
+    const imgMessage = await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 4000,
+      messages: [{ role: 'user', content: imagePrompt }],
+    });
+
+    const imgText = imgMessage.content
+      .filter(block => block.type === 'text')
+      .map(block => block.text)
+      .join('');
+
+    // Parse image prompts keyed by page number
+    const imgPromptMap = {};
+    const imgLines = imgText.split('\n').filter(l => l.trim());
+    for (const line of imgLines) {
+      const match = line.match(/^PAGE\s+(\d+):\s*(.+)/i);
+      if (match) {
+        imgPromptMap[parseInt(match[1])] = match[2].trim();
+      }
+    }
+
+    // Build final story text and images array
+    let finalStory = title + '\n';
+    const images = [];
 
     pages.forEach(p => {
-      storyText += `\n--- Page ${p.pageNum} ---\n${p.text}\n`;
+      finalStory += `\n--- Page ${p.pageNum} ---\n${p.text}\n`;
 
-      // Illustration rules by age group:
-      // Ages 3-6:   every page gets an illustration
-      // Ages 7-9:   odd pages only (1, 3, 5, 7...) — every other page
-      // Ages 10-12: first page only
       let includeIllustration = false;
-      if (ageGroup === 'Ages 3–6') {
-        includeIllustration = true;
-      } else if (ageGroup === 'Ages 7–9') {
-        includeIllustration = p.pageNum % 2 !== 0; // odd pages only
-      } else if (ageGroup === 'Ages 10–12') {
-        includeIllustration = p.pageNum === 1;
-      }
+      if (ageGroup === 'Ages 3–6') includeIllustration = true;
+      else if (ageGroup === 'Ages 7–9') includeIllustration = p.pageNum % 2 !== 0;
+      else if (ageGroup === 'Ages 10–12') includeIllustration = p.pageNum === 1;
 
-      if (includeIllustration) {
-        const enrichedImg = p.img
-          ? `${p.img} | ${characterAnchor} | no text, no words`
-          : `${bible.hero}, ${setting}, children's book watercolor illustration, soft pastel colors, no text | ${characterAnchor}`;
-        images.push(enrichedImg);
+      if (includeIllustration && imgPromptMap[p.pageNum]) {
+        images.push(`${imgPromptMap[p.pageNum]}, no text, no words`);
+      } else if (includeIllustration) {
+        // Fallback if prompt wasn't generated for this page
+        images.push(`${bible.hero}, ${setting}, children's book watercolor illustration, soft pastel colors, no text`);
       } else {
-        // Push null so the images array index stays aligned with page number
         images.push(null);
       }
     });
 
     return res.status(200).json({
-      story: storyText.trim(),
+      story: finalStory.trim(),
       images,
       storyId: `story_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       heroPortraitPrompt: `${bible.hero}, full body character portrait, neutral pose, plain simple background, children's book watercolor illustration, soft pastel colors, cute and friendly, no text`,
