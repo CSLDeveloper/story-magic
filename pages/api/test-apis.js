@@ -17,21 +17,38 @@ export default async function handler(req, res) {
     results.openai_tts = { error: e.message };
   }
 
-  // Test fal.ai key validity
+  // Test fal.ai by submitting a minimal FLUX Pro request
   try {
-    const falRes = await fetch('https://fal.ai/api/me', {
-      headers: { 'Authorization': `Key ${process.env.FAL_KEY}` },
+    const falRes = await fetch('https://queue.fal.run/fal-ai/flux-pro', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Key ${process.env.FAL_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        prompt: 'a red circle on white background',
+        num_images: 1,
+        image_size: 'square_hd',
+        num_inference_steps: 1,
+      }),
     });
     const body = await falRes.text();
-    results.fal_ai = { status: falRes.status, body: body.slice(0, 200) };
+    // A 200 or 201 means the key is valid and job was queued
+    if (falRes.status === 200 || falRes.status === 201) {
+      results.fal_ai = { status: falRes.status, body: 'OK - job queued successfully' };
+    } else {
+      results.fal_ai = { status: falRes.status, body: body.slice(0, 300) };
+    }
   } catch (e) {
     results.fal_ai = { error: e.message };
   }
 
-  // Test Anthropic
-  results.anthropic = { key: process.env.ANTHROPIC_API_KEY ? 'SET' : 'MISSING' };
-  results.fal_key   = { key: process.env.FAL_KEY          ? 'SET' : 'MISSING' };
-  results.openai    = { key: process.env.OPENAI_API_KEY    ? 'SET' : 'MISSING' };
+  // Key presence checks
+  results.keys = {
+    anthropic: process.env.ANTHROPIC_API_KEY ? 'SET' : 'MISSING',
+    fal:       process.env.FAL_KEY           ? 'SET' : 'MISSING',
+    openai:    process.env.OPENAI_API_KEY    ? 'SET' : 'MISSING',
+  };
 
   res.status(200).json(results);
 }
