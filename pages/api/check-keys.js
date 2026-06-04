@@ -1,6 +1,7 @@
 export default function handler(req, res) {
-  const stability = process.env.STABILITY_API_KEY ? 'SET' : 'MISSING';
-  const elevenlabs = process.env.ELEVENLABS_API_KEY ? 'SET' : 'MISSING';
-  const anthropic = process.env.ANTHROPIC_API_KEY ? 'SET' : 'MISSING';
-  res.status(200).json({ stability, elevenlabs, anthropic });
+  res.status(200).json({
+    anthropic:  process.env.ANTHROPIC_API_KEY  ? 'SET' : 'MISSING',
+    fal_ai:     process.env.FAL_KEY            ? 'SET' : 'MISSING',
+    openai:     process.env.OPENAI_API_KEY     ? 'SET' : 'MISSING',
+  });
 }
