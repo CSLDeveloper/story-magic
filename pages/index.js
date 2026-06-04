@@ -223,12 +223,15 @@ export default function Home() {
     stopReading();
   }, [currentPage]);
 
-  // Background image preloader — fetch current + next 2 pages ahead
-  // Pages 2+ wait until page 1 is cached (portrait must exist first)
+  // Background image preloader — starts immediately on title page, looks 3 pages ahead
+  // Pages 2+ wait until page 1 is cached (portrait must exist on server first)
   useEffect(() => {
     if (screen !== 'story' || !storyData) return;
 
-    const pagesToFetch = [currentPage, currentPage + 1, currentPage + 2]
+    // Start from page 1 even when on title page (currentPage === 0)
+    const startFrom = Math.max(1, currentPage);
+
+    const pagesToFetch = [startFrom, startFrom + 1, startFrom + 2, startFrom + 3]
       .filter(p => p >= 1 && p <= storyData.pages.length)
       .filter(p => imgCache[p] === undefined && !fetchingRef.current.has(p));
 
@@ -243,10 +246,9 @@ export default function Home() {
         return;
       }
 
-      // Pages 2+ must wait for page 1 to finish so the portrait cache exists
+      // Pages 2+ must wait for page 1 to finish so the portrait is cached on the server
       if (p > 1 && imgCache[1] === undefined) {
-        // Page 1 not done yet — don't fetch yet, will retry when imgCache updates
-        return;
+        return; // Effect re-runs when imgCache updates after page 1 finishes
       }
 
       fetchingRef.current.add(p);
