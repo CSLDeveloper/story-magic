@@ -8,59 +8,108 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000);
 
-const NEGATIVE_PROMPT = [
-  'text', 'words', 'letters', 'numbers', 'watermark',
-  'scary', 'violent', 'realistic photo', 'blurry',
-  'deformed', 'extra limbs', 'bad anatomy', 'ugly',
-  'wrong species', 'inconsistent character',
-].join(', ');
-
-// Text-to-image using SD3.5 — for generating the reference portrait
-async function textToImage(apiKey, prompt) {
-  const form = new FormData();
-  form.append('prompt', prompt);
-  form.append('negative_prompt', NEGATIVE_PROMPT);
-  form.append('model', 'sd3.5-medium');
-  form.append('aspect_ratio', '1:1'); // Square for portrait
-  form.append('output_format', 'jpeg');
-  form.append('seed', '42');
-
-  const res = await fetch('https://api.stability.ai/v2beta/stable-image/generate/sd3', {
+// Upload a buffer to fal.ai storage and return a public URL
+// Kontext requires a URL, not raw bytes
+async function uploadToFal(falKey, imageBuffer, filename = 'image.jpg') {
+  const res = await fetch('https://fal.ai/api/upload', {
     method: 'POST',
-    headers: { 'Authorization': `Bearer ${apiKey}`, 'Accept': 'image/*' },
-    body: form,
+    headers: {
+      'Authorization': `Key ${falKey}`,
+      'Content-Type': 'image/jpeg',
+      'x-file-name': filename,
+    },
+    body: imageBuffer,
   });
-
-  if (!res.ok) throw new Error(`Portrait generation failed ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  return Buffer.from(await res.arrayBuffer());
+  if (!res.ok) throw new Error(`fal upload failed ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const data = await res.json();
+  return data.url;
 }
 
-// Style Transfer — applies the character portrait's visual style to a new scene
-// This is fundamentally different from image-to-image:
-// instead of modifying the portrait, it uses the portrait as a style reference
-// and generates a completely new scene with that character's visual DNA
-async function styleTransfer(apiKey, scenePrompt, portraitBuffer, fidelity = 0.7) {
-  const form = new FormData();
-  form.append('prompt', scenePrompt);
-  form.append('negative_prompt', NEGATIVE_PROMPT);
-  form.append('fidelity', String(fidelity));
-  form.append('output_format', 'jpeg');
-  // The portrait is the style reference, not the scene base
-  form.append('image', new Blob([portraitBuffer], { type: 'image/jpeg' }), 'style_reference.jpg');
-
-  const res = await fetch('https://api.stability.ai/v2beta/stable-image/edit/style', {
+// Generate a portrait using fal.ai FLUX Kontext text-to-image
+async function generatePortrait(falKey, prompt) {
+  const res = await fetch('https://queue.fal.run/fal-ai/flux-pro', {
     method: 'POST',
-    headers: { 'Authorization': `Bearer ${apiKey}`, 'Accept': 'image/*' },
-    body: form,
+    headers: {
+      'Authorization': `Key ${falKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      prompt: `${prompt}, children's book watercolor illustration, soft pastel colors, cute friendly art style, no text, no words`,
+      image_size: 'landscape_4_3',
+      num_inference_steps: 28,
+      guidance_scale: 3.5,
+      num_images: 1,
+      output_format: 'jpeg',
+    }),
   });
+  if (!res.ok) throw new Error(`FLUX portrait failed ${res.status}: ${(await res.text()).slice(0, 200)}`);
 
-  if (!res.ok) {
-    const err = await res.text();
-    // If style transfer endpoint fails, fall back to text-to-image
-    console.warn(`Style transfer failed (${res.status}), falling back to text-to-image: ${err.slice(0, 100)}`);
-    return null;
+  // fal queue — poll for result
+  const queue = await res.json();
+  return await pollFalQueue(falKey, queue.request_id, 'fal-ai/flux-pro');
+}
+
+// Use FLUX Kontext to edit the portrait into a new scene while preserving character
+async function generateScene(falKey, scenePrompt, portraitUrl) {
+  const res = await fetch('https://queue.fal.run/fal-ai/flux-pro/kontext', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Key ${falKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      prompt: `Keep the exact same character appearance — same face, hair, outfit, and proportions. Change the scene to: ${scenePrompt}. Children's book watercolor illustration, soft pastel colors, cute friendly art, no text, no words.`,
+      image_url: portraitUrl,
+      guidance_scale: 3.5,
+      num_inference_steps: 28,
+      num_images: 1,
+      output_format: 'jpeg',
+    }),
+  });
+  if (!res.ok) throw new Error(`Kontext scene failed ${res.status}: ${(await res.text()).slice(0, 200)}`);
+
+  const queue = await res.json();
+  return await pollFalQueue(falKey, queue.request_id, 'fal-ai/flux-pro/kontext');
+}
+
+// Poll fal.ai queue until result is ready
+async function pollFalQueue(falKey, requestId, endpointId, maxWait = 120000) {
+  const start = Date.now();
+  const statusUrl = `https://queue.fal.run/${endpointId}/requests/${requestId}`;
+
+  while (Date.now() - start < maxWait) {
+    await new Promise(r => setTimeout(r, 2000));
+
+    const statusRes = await fetch(statusUrl, {
+      headers: { 'Authorization': `Key ${falKey}` },
+    });
+
+    if (!statusRes.ok) continue;
+    const status = await statusRes.json();
+
+    if (status.status === 'COMPLETED') {
+      // Fetch actual result
+      const resultRes = await fetch(`${statusUrl}/result`, {
+        headers: { 'Authorization': `Key ${falKey}` },
+      });
+      if (!resultRes.ok) throw new Error('Failed to fetch result');
+      const result = await resultRes.json();
+      const imageUrl = result.images?.[0]?.url;
+      if (!imageUrl) throw new Error('No image in result');
+      // Download image and return as buffer
+      const imgRes = await fetch(imageUrl);
+      return {
+        buffer: Buffer.from(await imgRes.arrayBuffer()),
+        url: imageUrl,
+      };
+    }
+
+    if (status.status === 'FAILED') {
+      throw new Error(`fal job failed: ${JSON.stringify(status.error || status)}`);
+    }
+    // PENDING or IN_PROGRESS — keep polling
   }
-  return Buffer.from(await res.arrayBuffer());
+  throw new Error('fal job timed out after 2 minutes');
 }
 
 export default async function handler(req, res) {
@@ -72,91 +121,66 @@ export default async function handler(req, res) {
   if (!description) return res.status(400).json({ error: 'Description required' });
   if (!storyId)     return res.status(400).json({ error: 'storyId required' });
 
-  const apiKey = process.env.STABILITY_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: 'Stability API key not configured' });
+  const falKey = process.env.FAL_KEY;
+  if (!falKey) return res.status(500).json({ error: 'FAL_KEY not configured' });
 
   try {
-    let imageBuffer;
-
     if (pageNum === 1) {
-      // Page 1: generate hero portrait (text-to-image, fixed seed for consistency)
-      // Also generate sidekick portrait in parallel
-      const [heroBuffer, sidekickBuffer] = await Promise.all([
-        textToImage(apiKey, heroPortraitPrompt || description),
-        sidekickPortraitPrompt
-          ? textToImage(apiKey, sidekickPortraitPrompt)
-          : Promise.resolve(null),
-      ]);
+      // Generate hero portrait — text-to-image via FLUX Pro
+      const heroResult = await generatePortrait(falKey, heroPortraitPrompt || description);
 
+      // Optionally generate sidekick portrait in parallel (best effort)
+      let sidekickResult = null;
+      if (sidekickPortraitPrompt) {
+        try {
+          sidekickResult = await generatePortrait(falKey, sidekickPortraitPrompt);
+        } catch (e) {
+          console.warn('Sidekick portrait failed:', e.message);
+        }
+      }
+
+      // Cache portrait URLs for Kontext (needs URL not buffer)
       portraitCache.set(storyId, {
-        hero: heroBuffer,
-        sidekick: sidekickBuffer,
+        heroUrl: heroResult.url,
+        sidekickUrl: sidekickResult?.url || null,
         timestamp: Date.now(),
       });
 
-      // Return hero portrait as page 1 illustration
-      imageBuffer = heroBuffer;
+      // Return hero portrait as page 1 image
+      res.setHeader('Content-Type', 'image/jpeg');
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      return res.send(heroResult.buffer);
+    }
 
-    } else {
-      // Pages 2+: wait up to 30s for page 1 portrait to be cached
-      let cached = portraitCache.get(storyId);
-      if (!cached?.hero) {
-        for (let i = 0; i < 30; i++) {
-          await new Promise(r => setTimeout(r, 1000));
-          cached = portraitCache.get(storyId);
-          if (cached?.hero) break;
-        }
-      }
-
-      if (cached?.hero) {
-        // Build scene prompt with both character descriptions embedded
-        let scenePrompt = description;
-        if (cached.sidekick && sidekickPortraitPrompt) {
-          const sidekickDesc = sidekickPortraitPrompt
-            .replace(/, full body character portrait.*$/i, '')
-            .trim();
-          scenePrompt = `${description} Sidekick is: ${sidekickDesc}.`;
-        }
-
-        // Use style transfer with hero portrait as the style reference
-        // fidelity 0.7 = strong character style carried through, scene still varies
-        imageBuffer = await styleTransfer(apiKey, scenePrompt, cached.hero, 0.7);
-
-        // If style transfer failed, fall back to plain text-to-image
-        if (!imageBuffer) {
-          const form = new FormData();
-          form.append('prompt', scenePrompt);
-          form.append('negative_prompt', NEGATIVE_PROMPT);
-          form.append('model', 'sd3.5-medium');
-          form.append('aspect_ratio', '3:2');
-          form.append('output_format', 'jpeg');
-          const fallback = await fetch('https://api.stability.ai/v2beta/stable-image/generate/sd3', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${apiKey}`, 'Accept': 'image/*' },
-            body: form,
-          });
-          imageBuffer = Buffer.from(await fallback.arrayBuffer());
-        }
-      } else {
-        // Portrait never arrived — plain text-to-image
-        const form = new FormData();
-        form.append('prompt', description);
-        form.append('negative_prompt', NEGATIVE_PROMPT);
-        form.append('model', 'sd3.5-medium');
-        form.append('aspect_ratio', '3:2');
-        form.append('output_format', 'jpeg');
-        const fallback = await fetch('https://api.stability.ai/v2beta/stable-image/generate/sd3', {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${apiKey}`, 'Accept': 'image/*' },
-          body: form,
-        });
-        imageBuffer = Buffer.from(await fallback.arrayBuffer());
+    // Pages 2+ — wait up to 30s for page 1 portrait cache
+    let cached = portraitCache.get(storyId);
+    if (!cached?.heroUrl) {
+      for (let i = 0; i < 30; i++) {
+        await new Promise(r => setTimeout(r, 1000));
+        cached = portraitCache.get(storyId);
+        if (cached?.heroUrl) break;
       }
     }
 
+    if (!cached?.heroUrl) {
+      return res.status(503).json({ error: 'Portrait not ready yet — please retry' });
+    }
+
+    // Build scene prompt including sidekick description if available
+    let scenePrompt = description;
+    if (sidekickPortraitPrompt) {
+      const sidekickDesc = sidekickPortraitPrompt
+        .replace(/, full body character portrait.*$/i, '')
+        .trim();
+      scenePrompt = `${description} The sidekick companion in this scene looks like: ${sidekickDesc}.`;
+    }
+
+    // Use FLUX Kontext to generate scene anchored to hero portrait
+    const sceneResult = await generateScene(falKey, scenePrompt, cached.heroUrl);
+
     res.setHeader('Content-Type', 'image/jpeg');
     res.setHeader('Cache-Control', 'public, max-age=86400');
-    res.send(imageBuffer);
+    return res.send(sceneResult.buffer);
 
   } catch (error) {
     console.error('Illustration error:', error.message);
