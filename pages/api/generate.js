@@ -229,42 +229,49 @@ Write the complete story now:`;
       `PAGE ${p.pageNum}: ${p.text}`
     ).join('\n\n');
 
-    const imagePrompt = `You are writing image editing instructions for FLUX Kontext, an AI that edits a reference portrait into new scenes while preserving the character's appearance automatically.
+    const imagePrompt = `You are a professional children's book illustrator writing detailed scene briefs for an AI image generator called InstantCharacter.
 
-IMPORTANT: FLUX Kontext already has the character portrait. You do NOT need to describe what the character looks like — Kontext preserves their appearance. Describe ONLY what changes: the scene, action, background, and mood.
+InstantCharacter works by taking a reference portrait of the main character and placing them into a fully described scene. It does NOT read the story — it only sees your scene description. So your description must be COMPLETE and SPECIFIC.
 
-Characters in this story:
-- HERO: ${heroName} (${heroType})
-- SIDEKICK: ${sidekick}
-- VILLAIN: ${villain}
-- SETTING: ${setting}
+FIXED CHARACTER APPEARANCES (include these verbatim whenever the character appears):
+- HERO: ${bible.hero}
+- SIDEKICK: ${bible.partner}
+- VILLAIN: ${bible.baddie}
 
-For EACH page below, write a Kontext prompt (30-50 words) using this exact structure:
-1. START with: "Keep the character's exact appearance, position, and pose."
-2. NEW SCENE: specific background, environment, time of day, weather — use vivid color names
-3. KEY ACTION: what the character is physically doing right now — use strong verbs (crouching, sprinting, laughing, trembling, leaping)
-4. EMOTION: facial expression and body language
-5. LIGHTING: magical glow, warm sunset, dark storm, soft morning light, etc.
-6. END with: "Watercolor children's book illustration, soft pastel colors, no text."
+STORY SETTING: ${setting}
+ART STYLE FOR ALL PAGES: children's book watercolor illustration, soft pastel colors, expressive faces, warm storybook lighting, no text, no words
 
-RULES:
-- Be surgical — only describe what changes from the portrait
-- Never describe the character's clothing, hair, or face — Kontext knows
-- Use specific vivid colors: "emerald forest floor", "deep violet storm clouds", "golden afternoon rays"
-- Keep each prompt under 60 words
+For EACH story page below, write a single image generation prompt (60-90 words) that:
 
-Here are the story pages:
+1. CHARACTERS PRESENT: List which characters appear on this page. For each one, paste their EXACT appearance description from above word-for-word. Do not paraphrase.
+
+2. ACTION: Describe precisely what each character is doing in this exact moment — the single frozen frame that best represents this page. Use strong specific verbs. Describe body position, gesture, and facial expression.
+
+3. BACKGROUND SCENE: Describe the environment in rich visual detail — specific colors, objects, time of day, weather, lighting, atmosphere. Extract every visual clue from the page text.
+
+4. COMPOSITION: Where are the characters positioned in the frame? Are they close-up, mid-shot, or wide? Is the villain looming in the background? Is the sidekick beside or behind the hero?
+
+5. MOOD/LIGHTING: What is the emotional tone? Describe the lighting — golden sunbeams, ominous storm clouds, magical sparkles, moonlit shadows, etc.
+
+CRITICAL RULES:
+- Every prompt must stand completely alone — a reader with no story context must understand the full scene
+- Copy character appearance descriptions WORD FOR WORD — never invent clothing or features
+- Each prompt must directly match what happens in the page text above it
+- If the villain does not appear in the page text, do NOT include the villain in the prompt
+- Be specific with colors: "deep emerald leaves", "cobalt blue sky", "golden torchlight" not just "green" or "blue"
+
+HERE ARE THE STORY PAGES — write one prompt per page:
 
 ${imagePromptRequest}
 
-Format each response as:
-PAGE X: [prompt]
+Format as:
+PAGE X: [your complete scene prompt]
 
-Write ONLY the prompts, one per page, nothing else.`;
+Write ONLY the prompts. Nothing else.`;
 
     const imgMessage = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 4000,
+      max_tokens: 6000,
       temperature: 0.7,
       messages: [{ role: 'user', content: imagePrompt }],
     });
