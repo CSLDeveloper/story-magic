@@ -50,43 +50,54 @@ function StarField() {
 }
 
 // Scene elements keyed to story variables
-// Fetch one illustration and return a blob URL
-async function fetchIllustration(description, pageNum, storyId, heroPortraitPrompt, sidekickPortraitPrompt) {
+// Fetch one illustration and return { blobUrl, heroPortraitUrl }
+async function fetchIllustration(description, pageNum, storyId, heroPortraitPrompt, sidekickPortraitPrompt, heroPortraitUrl) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60000);
+  const timeout = setTimeout(() => controller.abort(), 180000);
   try {
     const res = await fetch('/api/illustrate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ description, pageNum, storyId, heroPortraitPrompt, sidekickPortraitPrompt }),
+      body: JSON.stringify({
+        description,
+        pageNum,
+        storyId,
+        heroPortraitPrompt,
+        sidekickPortraitPrompt,
+        heroPortraitUrl: heroPortraitUrl || null, // pass cached URL for pages 2+
+      }),
       signal: controller.signal,
     });
     clearTimeout(timeout);
-    if (!res.ok) return null;
+    if (!res.ok) return { blobUrl: null };
+    // Server sends back portrait URL in header for page 1
+    const returnedPortraitUrl = res.headers.get('x-portrait-url') || null;
     const blob = await res.blob();
-    return URL.createObjectURL(blob);
+    return {
+      blobUrl: URL.createObjectURL(blob),
+      heroPortraitUrl: returnedPortraitUrl,
+    };
   } catch {
     clearTimeout(timeout);
-    return null;
+    return { blobUrl: null };
   }
 }
 
-function IllustrationBlock({ cachedSrc, description, pageNum, storyId, heroPortraitPrompt, sidekickPortraitPrompt, onRetry }) {
+function IllustrationBlock({ cachedSrc, description, pageNum, storyId, heroPortraitPrompt, sidekickPortraitPrompt, heroPortraitUrl, onRetry }) {
   const [retrying, setRetrying] = useState(false);
   const [retrySrc, setRetrySrc] = useState(null);
 
   const src = retrySrc || cachedSrc;
-  // 'none' means this page intentionally has no illustration
   if (cachedSrc === 'none') return null;
   const status = retrying ? 'loading' : src ? 'loaded' : cachedSrc === null ? 'error' : 'loading';
 
   const handleRetry = async () => {
     setRetrying(true);
     setRetrySrc(null);
-    const newSrc = await fetchIllustration(description, pageNum, storyId, heroPortraitPrompt, sidekickPortraitPrompt);
-    setRetrySrc(newSrc);
+    const result = await fetchIllustration(description, pageNum, storyId, heroPortraitPrompt, sidekickPortraitPrompt, heroPortraitUrl);
+    setRetrySrc(result.blobUrl);
     setRetrying(false);
-    if (newSrc && onRetry) onRetry(pageNum, newSrc);
+    if (result.blobUrl && onRetry) onRetry(pageNum, result.blobUrl);
   };
 
   if (!description) return null;
@@ -197,6 +208,7 @@ export default function Home() {
   const [readLoading, setReadLoading] = useState(false);
   const audioRef  = useRef(null);
   const inputRef  = useRef(null);
+  const portraitUrlRef = useRef(null); // stores hero portrait URL after page 1 loads
   // Image cache: { [pageNum]: blobUrl | null }
   // null means fetch failed, undefined means not yet fetched
   const [imgCache, setImgCache]       = useState({});
@@ -240,30 +252,37 @@ export default function Home() {
     pagesToFetch.forEach(async (p) => {
       const description = storyData.images[p - 1];
 
-      // No illustration for this page — mark immediately and skip
+      // No illustration for this page
       if (!description) {
         setImgCache(prev => ({ ...prev, [p]: 'none' }));
         return;
       }
 
-      // Pages 2+ must wait for page 1 to finish so the portrait is cached on the server
-      if (p > 1 && imgCache[1] === undefined) {
-        return; // Effect re-runs when imgCache updates after page 1 finishes
+      // Pages 2+ must wait for page 1 portrait URL to be stored
+      if (p > 1 && !portraitUrlRef.current) {
+        return; // Will retry when imgCache updates after page 1 finishes
       }
 
       fetchingRef.current.add(p);
-      const src = await fetchIllustration(
+      const result = await fetchIllustration(
         description,
         p,
         storyData.storyId,
         storyData.heroPortraitPrompt,
-        storyData.sidekickPortraitPrompt
+        storyData.sidekickPortraitPrompt,
+        portraitUrlRef.current  // pass stored portrait URL directly
       );
       fetchingRef.current.delete(p);
-      setImgCache(prev => ({ ...prev, [p]: src }));
+
+      // Page 1: store the returned portrait URL for all subsequent pages
+      if (p === 1 && result.heroPortraitUrl) {
+        portraitUrlRef.current = result.heroPortraitUrl;
+      }
+
+      setImgCache(prev => ({ ...prev, [p]: result.blobUrl }));
     });
   // imgCache in deps so effect re-runs when page 1 finishes and unblocks pages 2+
-  }, [currentPage, screen, storyData, imgCache]);
+  }, [currentPage, screen, storyData, imgCache, portraitUrlRef.current]);
 
   const stopReading = () => {
     if (audioRef.current) {
@@ -390,6 +409,7 @@ export default function Home() {
     setCurrentPage(0);
     setImgCache({});
     fetchingRef.current = new Set();
+    portraitUrlRef.current = null;
   };
 
   const currentStep = STEPS[stepIndex];
@@ -596,6 +616,7 @@ export default function Home() {
                           storyId={storyData.storyId}
                           heroPortraitPrompt={storyData.heroPortraitPrompt}
                           sidekickPortraitPrompt={storyData.sidekickPortraitPrompt}
+                          heroPortraitUrl={portraitUrlRef.current}
                           onRetry={(p, src) => setImgCache(prev => ({ ...prev, [p]: src }))}
                         />
                       </div>
