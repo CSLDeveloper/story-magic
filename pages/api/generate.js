@@ -128,16 +128,45 @@ export default async function handler(req, res) {
   };
 
   const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-  const uniqueDirective = `
-STORY UNIQUENESS REQUIREMENTS (these make your story different from any other):
-- ${pick(randomSeeds.openingHook)}
-- ${pick(randomSeeds.twist)}
-- ${pick(randomSeeds.setting_detail)}
-- Give the hero a specific name for their special power (invent something creative)
-- The villain should have one unexpected personality quirk that makes them memorable
-`;
 
-  const storyPrompt = `Write an exciting, imaginative children's story perfectly suited for ${ageGroup}.
+  // Pick unique story elements — assigned to specific story beats so they land correctly
+  const openingHook   = pick(randomSeeds.openingHook);
+  const twist         = pick(randomSeeds.twist);
+  const settingDetail = pick(randomSeeds.setting_detail);
+
+  // Build a story beat outline proportional to page count
+  // This keeps the narrative on track across longer stories
+  const third  = Math.floor(config.pages / 3);
+  const two3rd = Math.floor(config.pages * 2 / 3);
+
+  const outlinePrompt = `Plan a ${config.pages}-page children's story with these details:
+- Hero: ${heroName}, ${heroDesc}, ${heroType}
+- Sidekick: ${sidekick}
+- Setting: ${setting}
+- Power: ${power}
+- Villain: ${villain}
+- Lesson: ${lesson}
+- Opening: ${openingHook}
+- Twist (around page ${two3rd}): ${twist}
+- Setting detail to use: ${settingDetail}
+
+Write a tight story outline with exactly ${config.pages} numbered beats, one sentence each.
+Every beat must follow logically from the previous one.
+The story must have a clear arc: Setup (pages 1-${third}), Conflict (pages ${third+1}-${two3rd}), Resolution (pages ${two3rd+1}-${config.pages}).
+Format: "1. [beat]" through "${config.pages}. [beat]"
+Write ONLY the numbered beats, nothing else.`;
+
+  try {
+    // --- PASS 0: Generate story outline for narrative coherence ---
+    const outlineMessage = await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1000,
+      temperature: 0.85,
+      messages: [{ role: 'user', content: outlinePrompt }],
+    });
+
+    const outline = outlineMessage.content
+      .filter(b => b.type === 'text').map(b => b.text).join(''); = `Write an exciting, imaginative children's story perfectly suited for ${ageGroup}.
 
 Story details:
 - Hero's name: ${heroName} — ${heroDesc}, ${heroType}
@@ -148,7 +177,8 @@ Story details:
 - Villain: ${villain}
 - Lesson/moral: ${lesson}
 
-${uniqueDirective}
+STORY OUTLINE — follow this beat-by-beat, one beat per page, in order:
+${outline}
 
 AGE GROUP REQUIREMENTS (${ageGroup}):
 - Number of pages: exactly ${config.pages} pages
@@ -157,20 +187,26 @@ AGE GROUP REQUIREMENTS (${ageGroup}):
 - Story complexity: ${config.complexity}
 - Tone: ${config.tone}
 
+CRITICAL NARRATIVE RULES:
+- Every page must follow directly and logically from the previous page
+- Each page covers exactly ONE beat from the outline above — do not skip or combine beats
+- The hero, sidekick and villain must behave consistently throughout
+- The lesson must emerge naturally from events — never state it directly until the final page
+- Do NOT introduce new characters or locations not in the outline
+
 FORMATTING RULES:
 - Start with a creative story title on its own line
 - Use "--- Page X ---" as a header for each page
-- Write ONLY the story text — no image descriptions, no IMG lines
-- Keep the story text clean and focused on the narrative
+- Write ONLY the story text — no image descriptions
+- Keep story text clean and focused on the narrative
 
-Write the complete story now:`;
+Write the complete story now, following the outline beat by beat:`;
 
-  try {
-    // --- PASS 1: Write the story ---
+    // --- PASS 1: Write the story (guided by outline) ---
     const storyMessage = await client.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: config.maxTokens,
-      temperature: 1.0,
+      temperature: 0.85,
       messages: [{ role: 'user', content: storyPrompt }],
     });
 
