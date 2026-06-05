@@ -1,3 +1,5 @@
+export const config = { maxDuration: 300 };
+
 // In-memory portrait cache per story session
 const portraitCache = new Map();
 
@@ -8,9 +10,10 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000);
 
-// Call fal.ai synchronously using fal.run (direct, no queue polling)
-async function falRun(falKey, endpointId, input) {
-  const res = await fetch(`https://fal.run/${endpointId}`, {
+// Universal fal.ai caller — tries sync first, falls back to queue polling
+async function falCall(falKey, endpointId, input, timeoutMs = 120000) {
+  // Step 1: Submit job to queue
+  const submitRes = await fetch(`https://queue.fal.run/${endpointId}`, {
     method: 'POST',
     headers: {
       'Authorization': `Key ${falKey}`,
@@ -19,31 +22,66 @@ async function falRun(falKey, endpointId, input) {
     body: JSON.stringify(input),
   });
 
-  const body = await res.text();
-  if (!res.ok) throw new Error(`fal.ai ${endpointId} error ${res.status}: ${body.slice(0, 300)}`);
+  if (!submitRes.ok) {
+    const err = await submitRes.text();
+    throw new Error(`fal submit error ${submitRes.status}: ${err.slice(0, 300)}`);
+  }
 
-  let data;
-  try { data = JSON.parse(body); }
-  catch(e) { throw new Error(`fal.ai bad JSON: ${body.slice(0, 200)}`); }
+  const { request_id } = await submitRes.json();
+  if (!request_id) throw new Error('No request_id returned from fal submit');
 
-  const imageUrl = data?.images?.[0]?.url;
-  if (!imageUrl) throw new Error(`No image URL in response: ${JSON.stringify(data).slice(0, 200)}`);
+  // Step 2: Poll for result
+  const statusUrl = `https://queue.fal.run/${endpointId}/requests/${request_id}`;
+  const resultUrl = `https://queue.fal.run/${endpointId}/requests/${request_id}/result`;
+  const start = Date.now();
 
-  const imgRes = await fetch(imageUrl);
-  if (!imgRes.ok) throw new Error(`Image download failed: ${imgRes.status}`);
+  while (Date.now() - start < timeoutMs) {
+    await new Promise(r => setTimeout(r, 3000));
 
-  return {
-    buffer: Buffer.from(await imgRes.arrayBuffer()),
-    url: imageUrl,
-  };
+    const statusRes = await fetch(statusUrl, {
+      headers: { 'Authorization': `Key ${falKey}` },
+    });
+
+    if (!statusRes.ok) continue;
+
+    const status = await statusRes.json();
+
+    if (status.status === 'COMPLETED') {
+      // Fetch result
+      const resultRes = await fetch(resultUrl, {
+        headers: { 'Authorization': `Key ${falKey}` },
+      });
+      if (!resultRes.ok) throw new Error(`Result fetch failed: ${resultRes.status}`);
+      const result = await resultRes.json();
+
+      const imageUrl = result?.images?.[0]?.url || result?.image?.url;
+      if (!imageUrl) throw new Error(`No image URL in result: ${JSON.stringify(result).slice(0, 200)}`);
+
+      // Download image buffer
+      const imgRes = await fetch(imageUrl);
+      if (!imgRes.ok) throw new Error(`Image download failed: ${imgRes.status}`);
+
+      return {
+        buffer: Buffer.from(await imgRes.arrayBuffer()),
+        url: imageUrl,
+      };
+    }
+
+    if (status.status === 'FAILED') {
+      throw new Error(`fal job failed: ${JSON.stringify(status.error || status).slice(0, 200)}`);
+    }
+    // PENDING or IN_PROGRESS — keep polling
+  }
+
+  throw new Error(`fal job timed out after ${timeoutMs / 1000}s`);
 }
 
-// Page 1: Generate the reference portrait using FLUX Pro (high quality, fixed seed)
+// Page 1: Generate reference portrait via FLUX Pro (high quality, fixed seed)
 async function generatePortrait(falKey, prompt) {
-  return falRun(falKey, 'fal-ai/flux-pro', {
-    prompt: `${prompt}, full body, neutral standing pose, plain white background, children's book watercolor illustration, soft pastel colors, cute expressive face, friendly art style, no text`,
+  return falCall(falKey, 'fal-ai/flux-pro', {
+    prompt: `${prompt}, full body, neutral standing pose, plain white background, children's book watercolor illustration, soft pastel colors, cute expressive face, no text`,
     image_size: 'portrait_4_3',
-    num_inference_steps: 35,
+    num_inference_steps: 28,
     guidance_scale: 3.5,
     num_images: 1,
     output_format: 'jpeg',
@@ -51,24 +89,21 @@ async function generatePortrait(falKey, prompt) {
   });
 }
 
-// Pages 2+: Use InstantCharacter to place the character consistently into each scene
-// InstantCharacter is purpose-built for consistent characters across multiple images
-async function generateScene(falKey, scenePrompt, portraitUrl, scale = 0.9) {
-  return falRun(falKey, 'fal-ai/instant-character', {
+// Pages 2+: InstantCharacter — purpose-built for consistent characters across scenes
+async function generateScene(falKey, scenePrompt, portraitUrl) {
+  return falCall(falKey, 'fal-ai/instant-character', {
     prompt: scenePrompt,
     image_url: portraitUrl,
     image_size: 'landscape_4_3',
-    scale: scale,              // 0.9 = strong identity preservation, scene still varies
+    scale: 0.9,
     guidance_scale: 3.5,
     num_inference_steps: 28,
     num_images: 1,
     output_format: 'jpeg',
-    negative_prompt: 'wrong head, mismatched body, deformed, ugly, bad anatomy, extra limbs, text, watermark, realistic photo, scary, violent',
+    negative_prompt: 'wrong head, mismatched body, deformed, ugly, bad anatomy, extra limbs, text, watermark, scary, violent',
     enable_safety_checker: true,
   });
 }
-
-export const config = { maxDuration: 300 };
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -84,8 +119,7 @@ export default async function handler(req, res) {
 
   try {
     if (pageNum === 1) {
-      // Generate hero portrait (text-to-image, fixed seed for consistency)
-      // Also generate sidekick portrait in parallel
+      // Generate hero and sidekick portraits in parallel
       const [heroResult, sidekickResult] = await Promise.all([
         generatePortrait(falKey, heroPortraitPrompt || description),
         sidekickPortraitPrompt
@@ -103,16 +137,15 @@ export default async function handler(req, res) {
         timestamp: Date.now(),
       });
 
-      // Page 1 shows the hero portrait
       res.setHeader('Content-Type', 'image/jpeg');
       res.setHeader('Cache-Control', 'public, max-age=86400');
       return res.send(heroResult.buffer);
     }
 
-    // Pages 2+: wait up to 40s for page 1 portrait cache
+    // Pages 2+: wait up to 60s for page 1 portrait to be cached
     let cached = portraitCache.get(storyId);
     if (!cached?.heroUrl) {
-      for (let i = 0; i < 40; i++) {
+      for (let i = 0; i < 60; i++) {
         await new Promise(r => setTimeout(r, 1000));
         cached = portraitCache.get(storyId);
         if (cached?.heroUrl) break;
@@ -123,18 +156,15 @@ export default async function handler(req, res) {
       return res.status(503).json({ error: 'Portrait not ready — please tap Try Again' });
     }
 
-    // Build scene prompt — include sidekick description in text
-    // since InstantCharacter takes one reference image
+    // Build enriched prompt with sidekick description in text
     let scenePrompt = description;
     if (sidekickPortraitPrompt) {
       const sidekickDesc = sidekickPortraitPrompt
-        .replace(/, full body character portrait.*$/i, '')
-        .replace(/, full body, neutral.*$/i, '')
+        .replace(/, full body.*$/i, '')
         .trim();
-      scenePrompt = `${description} The sidekick companion in this scene is: ${sidekickDesc}.`;
+      scenePrompt = `${description} The sidekick companion looks like: ${sidekickDesc}.`;
     }
 
-    // Use InstantCharacter for consistent character across all pages
     const sceneResult = await generateScene(falKey, scenePrompt, cached.heroUrl);
 
     res.setHeader('Content-Type', 'image/jpeg');
