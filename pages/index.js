@@ -50,37 +50,86 @@ function StarField() {
 }
 
 // Scene elements keyed to story variables
-// Fetch one illustration and return { blobUrl, heroPortraitUrl }
-async function fetchIllustration(description, pageNum, storyId, heroPortraitPrompt, sidekickPortraitPrompt, heroPortraitUrl) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 180000);
+// Step 1: Generate portraits server-side (called once for page 1)
+async function generatePortraits(heroPortraitPrompt, sidekickPortraitPrompt) {
   try {
     const res = await fetch('/api/illustrate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        description,
-        pageNum,
-        storyId,
-        heroPortraitPrompt,
-        sidekickPortraitPrompt,
-        heroPortraitUrl: heroPortraitUrl || null, // pass cached URL for pages 2+
-      }),
-      signal: controller.signal,
+      body: JSON.stringify({ heroPortraitPrompt, sidekickPortraitPrompt }),
     });
-    clearTimeout(timeout);
-    if (!res.ok) return { blobUrl: null };
-    // Server sends back portrait URL in header for page 1
-    const returnedPortraitUrl = res.headers.get('x-portrait-url') || null;
-    const blob = await res.blob();
-    return {
-      blobUrl: URL.createObjectURL(blob),
-      heroPortraitUrl: returnedPortraitUrl,
-    };
+    if (!res.ok) return null;
+    return await res.json(); // { heroPortraitUrl, sidekickPortraitUrl }
   } catch {
-    clearTimeout(timeout);
-    return { blobUrl: null };
+    return null;
   }
+}
+
+// Step 2: Generate scene using fal client proxy (browser-side, no server timeout)
+// Dynamically import fal client to avoid SSR issues
+async function generateScene(scenePrompt, portraitUrl, sidekickPortraitPrompt) {
+  try {
+    const { fal } = await import('@fal-ai/client');
+    fal.config({ proxyUrl: '/api/fal/proxy' });
+
+    let prompt = scenePrompt;
+    if (sidekickPortraitPrompt) {
+      const sidekickDesc = sidekickPortraitPrompt.replace(/, full body.*$/i, '').trim();
+      prompt = `${scenePrompt} The sidekick companion looks like: ${sidekickDesc}.`;
+    }
+
+    const result = await fal.subscribe('fal-ai/instant-character', {
+      input: {
+        prompt,
+        image_url: portraitUrl,
+        image_size: 'landscape_4_3',
+        scale: 0.9,
+        guidance_scale: 3.5,
+        num_inference_steps: 28,
+        num_images: 1,
+        output_format: 'jpeg',
+        negative_prompt: 'wrong head, mismatched body, deformed, ugly, bad anatomy, extra limbs, text, watermark, scary, violent',
+      },
+    });
+
+    const imageUrl = result?.data?.images?.[0]?.url || result?.images?.[0]?.url;
+    if (!imageUrl) return null;
+
+    // Download image and convert to blob URL
+    const imgRes = await fetch(imageUrl);
+    if (!imgRes.ok) return null;
+    const blob = await imgRes.blob();
+    return URL.createObjectURL(blob);
+  } catch(e) {
+    console.error('Scene generation error:', e.message);
+    return null;
+  }
+}
+
+// Main illustration fetcher — routes to correct function by page
+async function fetchIllustration(description, pageNum, storyId, heroPortraitPrompt, sidekickPortraitPrompt, heroPortraitUrl) {
+  if (pageNum === 1) {
+    // Page 1 handled by server — returns portrait URLs as JSON
+    const portraits = await generatePortraits(heroPortraitPrompt, sidekickPortraitPrompt);
+    if (!portraits?.heroPortraitUrl) return { blobUrl: null, heroPortraitUrl: null };
+    // Page 1 illustration IS the hero portrait — fetch and convert to blob
+    try {
+      const imgRes = await fetch(portraits.heroPortraitUrl);
+      const blob = await imgRes.blob();
+      return {
+        blobUrl: URL.createObjectURL(blob),
+        heroPortraitUrl: portraits.heroPortraitUrl,
+        sidekickPortraitUrl: portraits.sidekickPortraitUrl,
+      };
+    } catch {
+      return { blobUrl: null, heroPortraitUrl: portraits.heroPortraitUrl };
+    }
+  }
+
+  // Pages 2+ — browser calls fal directly through proxy (no Render timeout)
+  if (!heroPortraitUrl) return { blobUrl: null };
+  const blobUrl = await generateScene(description, heroPortraitUrl, sidekickPortraitPrompt);
+  return { blobUrl };
 }
 
 function IllustrationBlock({ cachedSrc, description, pageNum, storyId, heroPortraitPrompt, sidekickPortraitPrompt, heroPortraitUrl, onRetry }) {
@@ -274,9 +323,12 @@ export default function Home() {
       );
       fetchingRef.current.delete(p);
 
-      // Page 1: store the returned portrait URL for all subsequent pages
+      // Page 1: store the returned portrait URLs for all subsequent pages
       if (p === 1 && result.heroPortraitUrl) {
         setPortraitUrl(result.heroPortraitUrl);
+      }
+      if (p === 1 && result.sidekickPortraitUrl) {
+        setStoryData(prev => prev ? ({ ...prev, sidekickPortraitUrl: result.sidekickPortraitUrl }) : prev);
       }
 
       setImgCache(prev => ({ ...prev, [p]: result.blobUrl }));
