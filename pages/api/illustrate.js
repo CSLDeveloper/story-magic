@@ -1,8 +1,3 @@
-// Extend Next.js API route timeout to 5 minutes
-export const config = {
-  maxDuration: 300,
-};
-
 // In-memory portrait cache per story session
 const portraitCache = new Map();
 
@@ -13,9 +8,8 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000);
 
-// Call fal.ai synchronously — waits for result in one request
-// Uses fal.run (not queue.fal.run) for direct synchronous response
-async function falRequest(falKey, endpointId, input) {
+// Call fal.ai synchronously using fal.run (direct, no queue polling)
+async function falRun(falKey, endpointId, input) {
   const res = await fetch(`https://fal.run/${endpointId}`, {
     method: 'POST',
     headers: {
@@ -26,18 +20,15 @@ async function falRequest(falKey, endpointId, input) {
   });
 
   const body = await res.text();
-  if (!res.ok) {
-    throw new Error(`fal.ai error ${res.status}: ${body.slice(0, 300)}`);
-  }
+  if (!res.ok) throw new Error(`fal.ai ${endpointId} error ${res.status}: ${body.slice(0, 300)}`);
 
   let data;
   try { data = JSON.parse(body); }
-  catch (e) { throw new Error(`fal.ai bad JSON: ${body.slice(0, 200)}`); }
+  catch(e) { throw new Error(`fal.ai bad JSON: ${body.slice(0, 200)}`); }
 
   const imageUrl = data?.images?.[0]?.url;
   if (!imageUrl) throw new Error(`No image URL in response: ${JSON.stringify(data).slice(0, 200)}`);
 
-  // Download the image and return both buffer and URL
   const imgRes = await fetch(imageUrl);
   if (!imgRes.ok) throw new Error(`Image download failed: ${imgRes.status}`);
 
@@ -47,11 +38,11 @@ async function falRequest(falKey, endpointId, input) {
   };
 }
 
-// Generate a portrait — text to image using FLUX Pro
+// Page 1: Generate the reference portrait using FLUX Pro (high quality, fixed seed)
 async function generatePortrait(falKey, prompt) {
-  return falRequest(falKey, 'fal-ai/flux-pro', {
-    prompt: `${prompt}, children's book watercolor illustration, soft pastel colors, cute friendly art style, no text, no words`,
-    image_size: 'landscape_4_3',
+  return falRun(falKey, 'fal-ai/flux-pro', {
+    prompt: `${prompt}, full body, neutral standing pose, plain white background, children's book watercolor illustration, soft pastel colors, cute expressive face, friendly art style, no text`,
+    image_size: 'portrait_4_3',
     num_inference_steps: 35,
     guidance_scale: 3.5,
     num_images: 1,
@@ -60,19 +51,24 @@ async function generatePortrait(falKey, prompt) {
   });
 }
 
-// Generate a scene — image to image using FLUX Kontext Pro
-// Key insight from official docs: Kontext understands context from the image
-// so prompts should describe ONLY what changes, not re-describe the character
-async function generateScene(falKey, scenePrompt, portraitUrl) {
-  return falRequest(falKey, 'fal-ai/flux-pro/kontext', {
+// Pages 2+: Use InstantCharacter to place the character consistently into each scene
+// InstantCharacter is purpose-built for consistent characters across multiple images
+async function generateScene(falKey, scenePrompt, portraitUrl, scale = 0.9) {
+  return falRun(falKey, 'fal-ai/instant-character', {
     prompt: scenePrompt,
     image_url: portraitUrl,
+    image_size: 'landscape_4_3',
+    scale: scale,              // 0.9 = strong identity preservation, scene still varies
     guidance_scale: 3.5,
     num_inference_steps: 28,
     num_images: 1,
     output_format: 'jpeg',
+    negative_prompt: 'wrong head, mismatched body, deformed, ugly, bad anatomy, extra limbs, text, watermark, realistic photo, scary, violent',
+    enable_safety_checker: true,
   });
 }
+
+export const config = { maxDuration: 300 };
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -88,35 +84,35 @@ export default async function handler(req, res) {
 
   try {
     if (pageNum === 1) {
-      // Page 1 — generate hero portrait via text-to-image
-      const heroResult = await generatePortrait(falKey, heroPortraitPrompt || description);
+      // Generate hero portrait (text-to-image, fixed seed for consistency)
+      // Also generate sidekick portrait in parallel
+      const [heroResult, sidekickResult] = await Promise.all([
+        generatePortrait(falKey, heroPortraitPrompt || description),
+        sidekickPortraitPrompt
+          ? generatePortrait(falKey, sidekickPortraitPrompt).catch(e => {
+              console.warn('Sidekick portrait failed (non-fatal):', e.message);
+              return null;
+            })
+          : Promise.resolve(null),
+      ]);
 
-      // Generate sidekick portrait in parallel (best effort, non-blocking)
-      let sidekickResult = null;
-      if (sidekickPortraitPrompt) {
-        try {
-          sidekickResult = await generatePortrait(falKey, sidekickPortraitPrompt);
-        } catch (e) {
-          console.warn('Sidekick portrait failed (non-fatal):', e.message);
-        }
-      }
-
-      // Cache portrait URLs — Kontext needs a public URL not a buffer
+      // Cache portrait URLs for subsequent pages
       portraitCache.set(storyId, {
         heroUrl: heroResult.url,
         sidekickUrl: sidekickResult?.url || null,
         timestamp: Date.now(),
       });
 
+      // Page 1 shows the hero portrait
       res.setHeader('Content-Type', 'image/jpeg');
       res.setHeader('Cache-Control', 'public, max-age=86400');
       return res.send(heroResult.buffer);
     }
 
-    // Pages 2+ — wait up to 30s for page 1 portrait to be cached
+    // Pages 2+: wait up to 40s for page 1 portrait cache
     let cached = portraitCache.get(storyId);
     if (!cached?.heroUrl) {
-      for (let i = 0; i < 30; i++) {
+      for (let i = 0; i < 40; i++) {
         await new Promise(r => setTimeout(r, 1000));
         cached = portraitCache.get(storyId);
         if (cached?.heroUrl) break;
@@ -127,16 +123,18 @@ export default async function handler(req, res) {
       return res.status(503).json({ error: 'Portrait not ready — please tap Try Again' });
     }
 
-    // Build enriched scene prompt with sidekick description in text
+    // Build scene prompt — include sidekick description in text
+    // since InstantCharacter takes one reference image
     let scenePrompt = description;
     if (sidekickPortraitPrompt) {
       const sidekickDesc = sidekickPortraitPrompt
         .replace(/, full body character portrait.*$/i, '')
+        .replace(/, full body, neutral.*$/i, '')
         .trim();
-      scenePrompt = `${description} The sidekick companion looks like: ${sidekickDesc}.`;
+      scenePrompt = `${description} The sidekick companion in this scene is: ${sidekickDesc}.`;
     }
 
-    // Use FLUX Kontext to place the character into the new scene
+    // Use InstantCharacter for consistent character across all pages
     const sceneResult = await generateScene(falKey, scenePrompt, cached.heroUrl);
 
     res.setHeader('Content-Type', 'image/jpeg');
