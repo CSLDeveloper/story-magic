@@ -52,7 +52,7 @@ async function generatePortrait(falKey, prompt) {
   return falRequest(falKey, 'fal-ai/flux-pro', {
     prompt: `${prompt}, children's book watercolor illustration, soft pastel colors, cute friendly art style, no text, no words`,
     image_size: 'landscape_4_3',
-    num_inference_steps: 25,
+    num_inference_steps: 35,
     guidance_scale: 3.5,
     num_images: 1,
     output_format: 'jpeg',
@@ -61,12 +61,14 @@ async function generatePortrait(falKey, prompt) {
 }
 
 // Generate a scene — image to image using FLUX Kontext Pro
+// Key insight from official docs: Kontext understands context from the image
+// so prompts should describe ONLY what changes, not re-describe the character
 async function generateScene(falKey, scenePrompt, portraitUrl) {
   return falRequest(falKey, 'fal-ai/flux-pro/kontext', {
-    prompt: `Keep the exact same character — identical face, hair color, clothing, and body proportions. Place them in this new scene: ${scenePrompt}. Children's book watercolor illustration, soft pastel colors, no text, no words.`,
+    prompt: scenePrompt,
     image_url: portraitUrl,
     guidance_scale: 3.5,
-    num_inference_steps: 25,
+    num_inference_steps: 28,
     num_images: 1,
     output_format: 'jpeg',
   });

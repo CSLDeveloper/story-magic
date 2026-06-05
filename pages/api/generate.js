@@ -223,36 +223,44 @@ Write the complete story now:`;
       return false;
     });
 
-    // --- PASS 2: Write rich art director image prompts ---
-    // Only for pages that will actually be illustrated
+    // --- PASS 2: Kontext-optimized image prompts ---
+    // Tell Claude exactly how Kontext works so it writes the right kind of prompts
     const imagePromptRequest = illustratedPages.map(p =>
       `PAGE ${p.pageNum}: ${p.text}`
     ).join('\n\n');
 
-    const imagePrompt = `You are an art director briefing a professional children's book illustrator.
+    const imagePrompt = `You are writing image editing instructions for FLUX Kontext, an AI that edits a reference portrait into new scenes while preserving the character's appearance automatically.
 
-You have a story with these characters:
-- HERO: ${bible.hero}
-- SIDEKICK: ${bible.partner}  
-- VILLAIN: ${bible.baddie}
+IMPORTANT: FLUX Kontext already has the character portrait. You do NOT need to describe what the character looks like — Kontext preserves their appearance. Describe ONLY what changes: the scene, action, background, and mood.
+
+Characters in this story:
+- HERO: ${heroName} (${heroType})
+- SIDEKICK: ${sidekick}
+- VILLAIN: ${villain}
 - SETTING: ${setting}
-- ART STYLE: Warm watercolor children's book illustration, soft pastel colors, expressive faces, cinematic lighting, storybook quality
 
-Here are the story pages that need illustrations:
+For EACH page below, write a Kontext prompt (30-50 words) using this exact structure:
+1. START with: "Keep the character's exact appearance, position, and pose."
+2. NEW SCENE: specific background, environment, time of day, weather — use vivid color names
+3. KEY ACTION: what the character is physically doing right now — use strong verbs (crouching, sprinting, laughing, trembling, leaping)
+4. EMOTION: facial expression and body language
+5. LIGHTING: magical glow, warm sunset, dark storm, soft morning light, etc.
+6. END with: "Watercolor children's book illustration, soft pastel colors, no text."
+
+RULES:
+- Be surgical — only describe what changes from the portrait
+- Never describe the character's clothing, hair, or face — Kontext knows
+- Use specific vivid colors: "emerald forest floor", "deep violet storm clouds", "golden afternoon rays"
+- Keep each prompt under 60 words
+
+Here are the story pages:
 
 ${imagePromptRequest}
 
-For EACH page write a rich, detailed illustration prompt (40-60 words) that:
-1. Starts with the exact character appearance (copy verbatim from above for any character on this page)
-2. Describes the precise ACTION and EMOTION — what are they doing, what expression do they have, body language
-3. Describes the BACKGROUND in detail — time of day, weather, specific environmental elements from the page text
-4. Describes the LIGHTING and MOOD — magical glow, dramatic shadows, warm sunlight, etc.
-5. Ends with the art style
-
-Format each as:
+Format each response as:
 PAGE X: [prompt]
 
-Write ONLY the prompts, nothing else.`;
+Write ONLY the prompts, one per page, nothing else.`;
 
     const imgMessage = await client.messages.create({
       model: 'claude-sonnet-4-6',
