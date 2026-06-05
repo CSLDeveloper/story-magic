@@ -166,7 +166,9 @@ Write ONLY the numbered beats, nothing else.`;
     });
 
     const outline = outlineMessage.content
-      .filter(b => b.type === 'text').map(b => b.text).join(''); = `Write an exciting, imaginative children's story perfectly suited for ${ageGroup}.
+      .filter(b => b.type === 'text').map(b => b.text).join('');
+
+    const storyPrompt = `Write an exciting, imaginative children's story perfectly suited for ${ageGroup}.
 
 Story details:
 - Hero's name: ${heroName} — ${heroDesc}, ${heroType}
