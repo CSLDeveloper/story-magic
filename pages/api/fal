@@ -1,6 +1,4 @@
-// Official fal.ai proxy for Next.js Pages Router
-// Forwards browser requests to fal.ai with server-side API key attached
-// Browser fal client polls fal directly — Render's 30s timeout never applies
-import { createRouteHandler } from '@fal-ai/server-proxy/nextjs';
-
-export const { GET, POST, PUT } = createRouteHandler();
+// fal.ai proxy for Next.js Pages Router
+// Forwards browser requests to fal.ai with server-side API key
+// FAL_KEY is read automatically from environment variables
+export { handler as default } from '@fal-ai/server-proxy/nextjs';
