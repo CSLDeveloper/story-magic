@@ -95,6 +95,48 @@ export default async function handler(req, res) {
   const heroDesc = gender === 'Girl' ? 'young girl hero' : 'young boy hero';
   const bible   = buildCharacterBible(heroName, gender, heroType, sidekick, villain);
 
+  // Random seed elements to guarantee a unique story every time
+  const randomSeeds = {
+    openingHook: [
+      'Start with an unexpected discovery',
+      'Start with a problem that appears out of nowhere',
+      'Start on an ordinary day that suddenly changes',
+      'Start with a mysterious message or sign',
+      'Start with the hero making a mistake',
+      'Start with something strange appearing in the sky',
+      'Start with the hero overhearing a secret',
+      'Start with an unusual gift or object appearing',
+    ],
+    twist: [
+      'Include a surprising moment where the sidekick saves the day unexpectedly',
+      'Include a moment where the villain almost wins',
+      'Include a scene where the hero loses their special power temporarily',
+      'Include a moment where the hero and villain have to work together briefly',
+      'Include a surprising discovery about the villain\'s true motivation',
+      'Include a moment where the hero doubts themselves before finding courage',
+      'Include an unexpected character who helps at a critical moment',
+      'Include a twist where things get worse before they get better',
+    ],
+    setting_detail: [
+      'Feature a hidden location within the setting that only the hero discovers',
+      'Feature an unusual weather event that affects the story',
+      'Feature a specific time of day — dawn, dusk, midnight, or noon — as important to the plot',
+      'Feature a celebration or festival happening in the background',
+      'Feature a magical object found in the environment',
+      'Feature an ancient or mysterious place within the setting',
+    ],
+  };
+
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+  const uniqueDirective = `
+STORY UNIQUENESS REQUIREMENTS (these make your story different from any other):
+- ${pick(randomSeeds.openingHook)}
+- ${pick(randomSeeds.twist)}
+- ${pick(randomSeeds.setting_detail)}
+- Give the hero a specific name for their special power (invent something creative)
+- The villain should have one unexpected personality quirk that makes them memorable
+`;
+
   const storyPrompt = `Write an exciting, imaginative children's story perfectly suited for ${ageGroup}.
 
 Story details:
@@ -105,6 +147,8 @@ Story details:
 - Special power: ${power}
 - Villain: ${villain}
 - Lesson/moral: ${lesson}
+
+${uniqueDirective}
 
 AGE GROUP REQUIREMENTS (${ageGroup}):
 - Number of pages: exactly ${config.pages} pages
@@ -126,6 +170,7 @@ Write the complete story now:`;
     const storyMessage = await client.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: config.maxTokens,
+      temperature: 1.0,
       messages: [{ role: 'user', content: storyPrompt }],
     });
 
@@ -212,6 +257,7 @@ Write ONLY the prompts, nothing else.`;
     const imgMessage = await client.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 4000,
+      temperature: 0.7,
       messages: [{ role: 'user', content: imagePrompt }],
     });
 
