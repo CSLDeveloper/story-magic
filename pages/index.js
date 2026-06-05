@@ -66,7 +66,7 @@ async function generatePortraits(heroPortraitPrompt, sidekickPortraitPrompt) {
 }
 
 // Step 2: Generate scene using fal client proxy (browser-side, no server timeout)
-// Dynamically import fal client to avoid SSR issues
+// Step 2: Generate scene using fal client proxy (browser-side, no server timeout)
 async function generateScene(scenePrompt, portraitUrl, sidekickPortraitPrompt) {
   try {
     const { fal } = await import('@fal-ai/client');
@@ -77,6 +77,8 @@ async function generateScene(scenePrompt, portraitUrl, sidekickPortraitPrompt) {
       const sidekickDesc = sidekickPortraitPrompt.replace(/, full body.*$/i, '').trim();
       prompt = `${scenePrompt} The sidekick companion looks like: ${sidekickDesc}.`;
     }
+
+    console.log('fal: calling instant-character');
 
     const result = await fal.subscribe('fal-ai/instant-character', {
       input: {
@@ -90,12 +92,20 @@ async function generateScene(scenePrompt, portraitUrl, sidekickPortraitPrompt) {
         output_format: 'jpeg',
         negative_prompt: 'wrong head, mismatched body, deformed, ugly, bad anatomy, extra limbs, text, watermark, scary, violent',
       },
+      onQueueUpdate: (update) => { console.log('fal status:', update.status); },
     });
 
-    const imageUrl = result?.data?.images?.[0]?.url || result?.images?.[0]?.url;
-    if (!imageUrl) return null;
+    console.log('fal result:', JSON.stringify(result).slice(0, 200));
 
-    // Download image and convert to blob URL
+    const imageUrl = result?.data?.images?.[0]?.url
+      || result?.data?.image?.url
+      || result?.images?.[0]?.url;
+
+    if (!imageUrl) {
+      console.error('No imageUrl:', JSON.stringify(result).slice(0, 300));
+      return null;
+    }
+
     const imgRes = await fetch(imageUrl);
     if (!imgRes.ok) return null;
     const blob = await imgRes.blob();
