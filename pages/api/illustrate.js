@@ -10,9 +10,11 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000);
 
-// Universal fal.ai caller — tries sync first, falls back to queue polling
-async function falCall(falKey, endpointId, input, timeoutMs = 120000) {
-  // Step 1: Submit job to queue
+// Submit job to fal queue and poll until complete
+// Status URL:  queue.fal.run/{endpointId}/requests/{request_id}/status
+// Result URL:  queue.fal.run/{endpointId}/requests/{request_id}  (no /result suffix)
+async function falQueue(falKey, endpointId, input, timeoutMs = 180000) {
+  // Step 1: Submit
   const submitRes = await fetch(`https://queue.fal.run/${endpointId}`, {
     method: 'POST',
     headers: {
@@ -24,18 +26,19 @@ async function falCall(falKey, endpointId, input, timeoutMs = 120000) {
 
   if (!submitRes.ok) {
     const err = await submitRes.text();
-    throw new Error(`fal submit error ${submitRes.status}: ${err.slice(0, 300)}`);
+    throw new Error(`Submit failed ${submitRes.status}: ${err.slice(0, 300)}`);
   }
 
-  const { request_id } = await submitRes.json();
-  if (!request_id) throw new Error('No request_id returned from fal submit');
+  const submitData = await submitRes.json();
+  const requestId = submitData.request_id;
+  if (!requestId) throw new Error(`No request_id in submit response: ${JSON.stringify(submitData).slice(0,200)}`);
 
-  // Step 2: Poll for result
-  const statusUrl = `https://queue.fal.run/${endpointId}/requests/${request_id}`;
-  const resultUrl = `https://queue.fal.run/${endpointId}/requests/${request_id}/result`;
-  const start = Date.now();
+  const statusUrl = `https://queue.fal.run/${endpointId}/requests/${requestId}/status`;
+  const resultUrl = `https://queue.fal.run/${endpointId}/requests/${requestId}`;
 
-  while (Date.now() - start < timeoutMs) {
+  // Step 2: Poll status
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
     await new Promise(r => setTimeout(r, 3000));
 
     const statusRes = await fetch(statusUrl, {
@@ -43,42 +46,43 @@ async function falCall(falKey, endpointId, input, timeoutMs = 120000) {
     });
 
     if (!statusRes.ok) continue;
+    const statusData = await statusRes.json();
+    const status = statusData.status;
 
-    const status = await statusRes.json();
-
-    if (status.status === 'COMPLETED') {
-      // Fetch result
+    if (status === 'COMPLETED') {
+      // Step 3: Fetch result
       const resultRes = await fetch(resultUrl, {
         headers: { 'Authorization': `Key ${falKey}` },
       });
       if (!resultRes.ok) throw new Error(`Result fetch failed: ${resultRes.status}`);
       const result = await resultRes.json();
 
+      // Image URL can be at result.images[0].url or result.image.url
       const imageUrl = result?.images?.[0]?.url || result?.image?.url;
-      if (!imageUrl) throw new Error(`No image URL in result: ${JSON.stringify(result).slice(0, 200)}`);
+      if (!imageUrl) throw new Error(`No image URL in result: ${JSON.stringify(result).slice(0, 300)}`);
 
-      // Download image buffer
+      // Download image
       const imgRes = await fetch(imageUrl);
       if (!imgRes.ok) throw new Error(`Image download failed: ${imgRes.status}`);
-
       return {
         buffer: Buffer.from(await imgRes.arrayBuffer()),
         url: imageUrl,
       };
     }
 
-    if (status.status === 'FAILED') {
-      throw new Error(`fal job failed: ${JSON.stringify(status.error || status).slice(0, 200)}`);
+    if (status === 'FAILED') {
+      const errMsg = statusData.error || JSON.stringify(statusData);
+      throw new Error(`fal job failed: ${String(errMsg).slice(0, 200)}`);
     }
-    // PENDING or IN_PROGRESS — keep polling
+    // IN_QUEUE or IN_PROGRESS — keep polling
   }
 
   throw new Error(`fal job timed out after ${timeoutMs / 1000}s`);
 }
 
-// Page 1: Generate reference portrait via FLUX Pro (high quality, fixed seed)
+// Page 1: Reference portrait via FLUX Pro (fixed seed for consistency)
 async function generatePortrait(falKey, prompt) {
-  return falCall(falKey, 'fal-ai/flux-pro', {
+  return falQueue(falKey, 'fal-ai/flux-pro', {
     prompt: `${prompt}, full body, neutral standing pose, plain white background, children's book watercolor illustration, soft pastel colors, cute expressive face, no text`,
     image_size: 'portrait_4_3',
     num_inference_steps: 28,
@@ -89,9 +93,9 @@ async function generatePortrait(falKey, prompt) {
   });
 }
 
-// Pages 2+: InstantCharacter — purpose-built for consistent characters across scenes
+// Pages 2+: InstantCharacter — consistent character identity across scenes
 async function generateScene(falKey, scenePrompt, portraitUrl) {
-  return falCall(falKey, 'fal-ai/instant-character', {
+  return falQueue(falKey, 'fal-ai/instant-character', {
     prompt: scenePrompt,
     image_url: portraitUrl,
     image_size: 'landscape_4_3',
