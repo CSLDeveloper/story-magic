@@ -1,0 +1,53 @@
+export default async function handler(req, res) {
+  const { description, pageNum, storyId } = req.body || {};
+  const falKey = process.env.FAL_KEY;
+  const log = [];
+
+  log.push(`pageNum=${pageNum} storyId=${storyId}`);
+  log.push(`falKey=${falKey ? 'SET' : 'MISSING'}`);
+  log.push(`description=${description ? description.slice(0,80) : 'MISSING'}`);
+
+  // Test a minimal InstantCharacter call
+  try {
+    const submitRes = await fetch('https://queue.fal.run/fal-ai/instant-character', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Key ${falKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        prompt: 'a child running in a park, watercolor illustration',
+        image_url: 'https://storage.googleapis.com/falserverless/example_inputs/girl.jpg',
+        image_size: 'landscape_4_3',
+        scale: 0.9,
+        num_images: 1,
+        output_format: 'jpeg',
+      }),
+    });
+
+    const submitText = await submitRes.text();
+    log.push(`submit status=${submitRes.status}`);
+    log.push(`submit body=${submitText.slice(0, 300)}`);
+
+    if (submitRes.ok) {
+      const submitData = JSON.parse(submitText);
+      const requestId = submitData.request_id;
+      log.push(`request_id=${requestId}`);
+
+      if (requestId) {
+        // Poll once after 5 seconds
+        await new Promise(r => setTimeout(r, 5000));
+        const statusUrl = `https://queue.fal.run/fal-ai/instant-character/requests/${requestId}/status`;
+        const statusRes = await fetch(statusUrl, {
+          headers: { 'Authorization': `Key ${falKey}` },
+        });
+        const statusText = await statusRes.text();
+        log.push(`status_check=${statusRes.status} body=${statusText.slice(0, 200)}`);
+      }
+    }
+  } catch(e) {
+    log.push(`ERROR: ${e.message}`);
+  }
+
+  res.status(200).json({ log });
+}
