@@ -208,7 +208,7 @@ export default function Home() {
   const [readLoading, setReadLoading] = useState(false);
   const audioRef  = useRef(null);
   const inputRef  = useRef(null);
-  const portraitUrlRef = useRef(null); // stores hero portrait URL after page 1 loads
+  const [portraitUrl, setPortraitUrl] = useState(null); // hero portrait URL, triggers preloader re-run
   // Image cache: { [pageNum]: blobUrl | null }
   // null means fetch failed, undefined means not yet fetched
   const [imgCache, setImgCache]       = useState({});
@@ -259,7 +259,7 @@ export default function Home() {
       }
 
       // Pages 2+ must wait for page 1 portrait URL to be stored
-      if (p > 1 && !portraitUrlRef.current) {
+      if (p > 1 && !portraitUrl) {
         return; // Will retry when imgCache updates after page 1 finishes
       }
 
@@ -270,19 +270,19 @@ export default function Home() {
         storyData.storyId,
         storyData.heroPortraitPrompt,
         storyData.sidekickPortraitPrompt,
-        portraitUrlRef.current  // pass stored portrait URL directly
+        portraitUrl  // pass stored portrait URL directly
       );
       fetchingRef.current.delete(p);
 
       // Page 1: store the returned portrait URL for all subsequent pages
       if (p === 1 && result.heroPortraitUrl) {
-        portraitUrlRef.current = result.heroPortraitUrl;
+        setPortraitUrl(result.heroPortraitUrl);
       }
 
       setImgCache(prev => ({ ...prev, [p]: result.blobUrl }));
     });
   // imgCache in deps so effect re-runs when page 1 finishes and unblocks pages 2+
-  }, [currentPage, screen, storyData, imgCache, portraitUrlRef.current]);
+  }, [currentPage, screen, storyData, imgCache, portraitUrl]);
 
   const stopReading = () => {
     if (audioRef.current) {
@@ -409,7 +409,7 @@ export default function Home() {
     setCurrentPage(0);
     setImgCache({});
     fetchingRef.current = new Set();
-    portraitUrlRef.current = null;
+    setPortraitUrl(null);
   };
 
   const currentStep = STEPS[stepIndex];
@@ -616,7 +616,7 @@ export default function Home() {
                           storyId={storyData.storyId}
                           heroPortraitPrompt={storyData.heroPortraitPrompt}
                           sidekickPortraitPrompt={storyData.sidekickPortraitPrompt}
-                          heroPortraitUrl={portraitUrlRef.current}
+                          heroPortraitUrl={portraitUrl}
                           onRetry={(p, src) => setImgCache(prev => ({ ...prev, [p]: src }))}
                         />
                       </div>
