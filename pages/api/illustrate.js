@@ -1,95 +1,124 @@
-// This route now only handles page 1 portrait generation
-// Pages 2+ are handled entirely client-side via the fal proxy
-// This bypasses Render's 30-second HTTP timeout completely
+export const config = { maxDuration: 60 };
 
-export const config = { maxDuration: 120 };
+const FAL_HEADERS = (key) => ({
+  'Authorization': `Key ${key}`,
+  'Content-Type': 'application/json',
+});
 
-async function submitAndPoll(falKey, endpointId, input, timeoutMs = 90000) {
-  const submitRes = await fetch(`https://queue.fal.run/${endpointId}`, {
+// Simple synchronous fal.run call — no SDK, no queue, no proxy
+async function falRun(falKey, modelId, input) {
+  const res = await fetch(`https://fal.run/${modelId}`, {
     method: 'POST',
-    headers: {
-      'Authorization': `Key ${falKey}`,
-      'Content-Type': 'application/json',
-    },
+    headers: FAL_HEADERS(falKey),
     body: JSON.stringify(input),
   });
-  if (!submitRes.ok) {
-    const err = await submitRes.text();
-    throw new Error(`Submit failed ${submitRes.status}: ${err.slice(0, 200)}`);
-  }
-  const { request_id } = await submitRes.json();
-  if (!request_id) throw new Error('No request_id from fal');
 
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, 3000));
-    const statusRes = await fetch(
-      `https://queue.fal.run/${endpointId}/requests/${request_id}/status`,
-      { headers: { 'Authorization': `Key ${falKey}` } }
-    );
-    if (!statusRes.ok) continue;
-    const { status } = await statusRes.json();
+  const text = await res.text();
 
-    if (status === 'COMPLETED') {
-      const resultRes = await fetch(
-        `https://queue.fal.run/${endpointId}/requests/${request_id}`,
-        { headers: { 'Authorization': `Key ${falKey}` } }
-      );
-      if (!resultRes.ok) throw new Error(`Result fetch failed: ${resultRes.status}`);
-      const result = await resultRes.json();
-      const url = result?.images?.[0]?.url || result?.image?.url;
-      if (!url) throw new Error(`No image URL in result`);
-      const imgRes = await fetch(url);
-      return { buffer: Buffer.from(await imgRes.arrayBuffer()), url };
-    }
-    if (status === 'FAILED') throw new Error('fal job failed');
+  if (!res.ok) {
+    throw new Error(`fal.run ${modelId} failed ${res.status}: ${text.slice(0, 200)}`);
   }
-  throw new Error('fal timed out');
+
+  let data;
+  try { data = JSON.parse(text); }
+  catch(e) { throw new Error(`Bad JSON from fal: ${text.slice(0, 100)}`); }
+
+  const url = data?.images?.[0]?.url;
+  if (!url) throw new Error(`No image URL in response: ${text.slice(0, 200)}`);
+  return url;
+}
+
+// Download a fal.media image URL and return a buffer
+async function downloadImage(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Image download failed: ${res.status}`);
+  return Buffer.from(await res.arrayBuffer());
 }
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { heroPortraitPrompt, sidekickPortraitPrompt } = req.body;
+  const { heroPortraitPrompt, sidekickPortraitPrompt, description, pageNum, heroPortraitUrl } = req.body;
   const falKey = process.env.FAL_KEY;
   if (!falKey) return res.status(500).json({ error: 'FAL_KEY not configured' });
-  if (!heroPortraitPrompt) return res.status(400).json({ error: 'heroPortraitPrompt required' });
 
   try {
-    // Generate both portraits in parallel — only called once per story (page 1)
-    const [heroResult, sidekickResult] = await Promise.all([
-      submitAndPoll(falKey, 'fal-ai/flux-pro', {
-        prompt: `${heroPortraitPrompt}, full body, neutral pose, plain white background, children's book watercolor illustration, soft pastel colors, no text`,
+    // ── PAGE 1: Generate portrait ──────────────────────────────
+    if (pageNum === 1) {
+      if (!heroPortraitPrompt) return res.status(400).json({ error: 'heroPortraitPrompt required' });
+
+      // Generate hero portrait (FLUX Pro, fixed seed)
+      const heroUrl = await falRun(falKey, 'fal-ai/flux-pro', {
+        prompt: `${heroPortraitPrompt}, full body, neutral standing pose, plain white background, children's book watercolor illustration, soft pastel colors, no text`,
         image_size: 'portrait_4_3',
         num_inference_steps: 28,
         guidance_scale: 3.5,
         num_images: 1,
         output_format: 'jpeg',
         seed: 42,
-      }),
-      sidekickPortraitPrompt
-        ? submitAndPoll(falKey, 'fal-ai/flux-pro', {
-            prompt: `${sidekickPortraitPrompt}, full body, neutral pose, plain white background, children's book watercolor illustration, soft pastel colors, no text`,
+      });
+
+      // Generate sidekick portrait in parallel (best effort)
+      let sidekickUrl = null;
+      if (sidekickPortraitPrompt) {
+        try {
+          sidekickUrl = await falRun(falKey, 'fal-ai/flux-pro', {
+            prompt: `${sidekickPortraitPrompt}, full body, neutral standing pose, plain white background, children's book watercolor illustration, soft pastel colors, no text`,
             image_size: 'portrait_4_3',
             num_inference_steps: 28,
             guidance_scale: 3.5,
             num_images: 1,
             output_format: 'jpeg',
             seed: 99,
-          }).catch(() => null)
-        : Promise.resolve(null),
-    ]);
+          });
+        } catch(e) {
+          console.warn('Sidekick portrait failed (non-fatal):', e.message);
+        }
+      }
 
-    // Return portrait URLs so browser can use them for pages 2+
-    res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Cache-Control', 'no-store');
-    return res.status(200).json({
-      heroPortraitUrl: heroResult.url,
-      sidekickPortraitUrl: sidekickResult?.url || null,
-    });
+      // Return portrait URLs as JSON — browser stores them for pages 2+
+      return res.status(200).json({ heroPortraitUrl: heroUrl, sidekickPortraitUrl: sidekickUrl });
+    }
 
-  } catch (error) {
-    console.error('Portrait generation error:', error.message);
+    // ── PAGES 2+: Generate scene with InstantCharacter ─────────
+    if (!description) return res.status(400).json({ error: 'description required' });
+    if (!heroPortraitUrl) return res.status(400).json({ error: 'heroPortraitUrl required for pages 2+' });
+
+    let sceneUrl;
+    try {
+      // Try InstantCharacter first
+      sceneUrl = await falRun(falKey, 'fal-ai/instant-character', {
+        prompt: description,
+        image_url: heroPortraitUrl,
+        image_size: 'landscape_4_3',
+        scale: 0.9,
+        guidance_scale: 3.5,
+        num_inference_steps: 28,
+        num_images: 1,
+        output_format: 'jpeg',
+        negative_prompt: 'wrong head, mismatched body, deformed, ugly, bad anatomy, text, watermark, scary, violent',
+      });
+    } catch(e) {
+      console.error('InstantCharacter failed, falling back to FLUX Pro:', e.message);
+      // Fallback: plain FLUX Pro text-to-image
+      sceneUrl = await falRun(falKey, 'fal-ai/flux-pro', {
+        prompt: `${description}, children's book watercolor illustration, soft pastel colors, no text`,
+        image_size: 'landscape_4_3',
+        num_inference_steps: 28,
+        guidance_scale: 3.5,
+        num_images: 1,
+        output_format: 'jpeg',
+      });
+    }
+
+    // Download and return image buffer
+    const buffer = await downloadImage(sceneUrl);
+    res.setHeader('Content-Type', 'image/jpeg');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    return res.send(buffer);
+
+  } catch(error) {
+    console.error('Illustration error:', error.message);
     return res.status(500).json({ error: error.message });
   }
 }
