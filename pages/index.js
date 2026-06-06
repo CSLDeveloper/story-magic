@@ -78,9 +78,10 @@ async function generateScene(scenePrompt, portraitUrl, sidekickPortraitPrompt) {
       prompt = `${scenePrompt} The sidekick companion looks like: ${sidekickDesc}.`;
     }
 
-    console.log('fal: calling instant-character');
+    console.log('fal: submitting instant-character job');
 
-    const result = await fal.subscribe('fal-ai/instant-character', {
+    // Use fal.queue API (correct method per fal docs)
+    const { request_id } = await fal.queue.submit('fal-ai/instant-character', {
       input: {
         prompt,
         image_url: portraitUrl,
@@ -92,17 +93,36 @@ async function generateScene(scenePrompt, portraitUrl, sidekickPortraitPrompt) {
         output_format: 'jpeg',
         negative_prompt: 'wrong head, mismatched body, deformed, ugly, bad anatomy, extra limbs, text, watermark, scary, violent',
       },
-      onQueueUpdate: (update) => { console.log('fal status:', update.status); },
     });
 
-    console.log('fal result:', JSON.stringify(result).slice(0, 200));
+    console.log('fal: job submitted, request_id:', request_id);
 
-    const imageUrl = result?.data?.images?.[0]?.url
-      || result?.data?.image?.url
-      || result?.images?.[0]?.url;
+    // Poll for completion
+    let completed = false;
+    let attempts = 0;
+    while (!completed && attempts < 60) {
+      await new Promise(r => setTimeout(r, 3000));
+      attempts++;
+      const status = await fal.queue.status('fal-ai/instant-character', {
+        requestId: request_id,
+        logs: false,
+      });
+      console.log('fal status:', status.status);
+      if (status.status === 'COMPLETED') { completed = true; break; }
+      if (status.status === 'FAILED') throw new Error('fal job failed');
+    }
+
+    if (!completed) throw new Error('fal timed out');
+
+    const result = await fal.queue.result('fal-ai/instant-character', {
+      requestId: request_id,
+    });
+
+    console.log('fal result keys:', Object.keys(result?.data || result || {}));
+    const imageUrl = result?.data?.images?.[0]?.url || result?.images?.[0]?.url;
 
     if (!imageUrl) {
-      console.error('No imageUrl:', JSON.stringify(result).slice(0, 300));
+      console.error('No imageUrl in result:', JSON.stringify(result).slice(0, 300));
       return null;
     }
 
