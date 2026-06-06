@@ -26,6 +26,61 @@ const LOADING_MSGS = [
 const EMOJIS = { ageGroup:'🎂', heroName:'🧒', gender:'⭐', heroType:'🦸', sidekick:'🐾', setting:'🌍', power:'✨', villain:'😈', lesson:'💡' };
 const LABELS = { ageGroup:'Age Group', heroName:'Hero', gender:'Gender', heroType:'Type', sidekick:'Sidekick', setting:'World', power:'Power', villain:'Villain', lesson:'Lesson' };
 
+// Fun facts shown during loading to keep children entertained
+const LOADING_FACTS = [
+  "Did you know? Octopuses have three hearts! 🐙",
+  "A group of flamingos is called a flamboyance! 🦩",
+  "Honey never goes bad — archaeologists found 3000-year-old honey! 🍯",
+  "Butterflies taste with their feet! 🦋",
+  "A snail can sleep for 3 years! 🐌",
+  "Elephants are the only animals that can't jump! 🐘",
+  "Sea otters hold hands while sleeping so they don't drift apart! 🦦",
+  "A group of owls is called a parliament! 🦉",
+  "Wombat poop is cube-shaped — the only animal with cube poop! 🟫",
+  "Dolphins give each other names and call out to each other! 🐬",
+  "The shortest war in history lasted only 38 minutes! ⚔️",
+  "A cloud can weigh more than a million pounds! ☁️",
+  "Cows have best friends and get stressed when separated! 🐄",
+  "The moon is slowly drifting away from Earth — about 4cm per year! 🌙",
+  "A single bolt of lightning is five times hotter than the sun! ⚡",
+];
+
+function LoadingFacts() {
+  const [factIndex, setFactIndex] = useState(() => Math.floor(Math.random() * LOADING_FACTS.length));
+  const [visible, setVisible] = useState(true);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setVisible(false);
+      setTimeout(() => {
+        setFactIndex(i => (i + 1) % LOADING_FACTS.length);
+        setVisible(true);
+      }, 500);
+    }, 4000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div style={{
+      background: 'rgba(255,255,255,0.06)',
+      border: '1px solid rgba(255,255,255,0.12)',
+      borderRadius: 14,
+      padding: '12px 16px',
+      margin: '0 auto',
+      maxWidth: 380,
+      transition: 'opacity 0.5s ease',
+      opacity: visible ? 1 : 0,
+    }}>
+      <div style={{ color: '#c084fc', fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 2, marginBottom: 6 }}>
+        🌟 Fun Fact While You Wait
+      </div>
+      <div style={{ color: 'rgba(255,255,255,0.8)', fontSize: '0.9rem', lineHeight: 1.5, fontWeight: 600 }}>
+        {LOADING_FACTS[factIndex]}
+      </div>
+    </div>
+  );
+}
+
 function StarField() {
   const stars = Array.from({ length: 35 }, (_, i) => ({
     id: i,
@@ -106,6 +161,94 @@ async function fetchIllustration(description, pageNum, storyId, heroPortraitProm
   const blobUrl = await generateScene(description, heroPortraitUrl, sidekickPortraitPrompt);
   return { blobUrl };
 }
+
+
+// ─── Magical Music Engine (Web Audio API — no libraries, no cost) ───────────
+// Generates a gentle procedural melody using oscillators
+class MagicMusic {
+  constructor() {
+    this.ctx = null;
+    this.nodes = [];
+    this.running = false;
+    this.timeoutIds = [];
+  }
+
+  _ctx() {
+    if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    return this.ctx;
+  }
+
+  _note(freq, startTime, duration, volume = 0.08, type = 'sine') {
+    const ctx = this._ctx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, startTime);
+    gain.gain.setValueAtTime(0, startTime);
+    gain.gain.linearRampToValueAtTime(volume, startTime + 0.05);
+    gain.gain.linearRampToValueAtTime(0, startTime + duration);
+    osc.start(startTime);
+    osc.stop(startTime + duration + 0.1);
+    this.nodes.push(osc);
+  }
+
+  start() {
+    if (this.running || typeof window === 'undefined') return;
+    this.running = true;
+
+    // Pentatonic scale frequencies (magical, never clashes)
+    const pentatonic = [261.63, 293.66, 329.63, 392.00, 440.00, 523.25, 587.33, 659.25, 783.99, 880.00];
+
+    const playPhrase = () => {
+      if (!this.running) return;
+      try {
+        const ctx = this._ctx();
+        if (ctx.state === 'suspended') ctx.resume();
+        const now = ctx.currentTime;
+
+        // Gentle arpeggio melody — 8 notes per phrase
+        const chordRoot = pentatonic[Math.floor(Math.random() * 4)];
+        const melody = [0,2,4,7,9,7,4,2].map(i => pentatonic[i % pentatonic.length]);
+
+        melody.forEach((freq, i) => {
+          // Vary pitch slightly for musicality
+          const f = freq * (Math.random() > 0.7 ? 2 : 1);
+          this._note(f, now + i * 0.38, 0.55, 0.06, 'sine');
+        });
+
+        // Soft bass pad underneath
+        this._note(chordRoot * 0.5, now, 3.2, 0.04, 'triangle');
+        this._note(chordRoot * 0.75, now + 0.1, 3.0, 0.03, 'triangle');
+
+        // Sparkle high notes randomly
+        if (Math.random() > 0.5) {
+          this._note(pentatonic[Math.floor(Math.random() * pentatonic.length)] * 2, now + Math.random() * 2, 0.3, 0.04, 'sine');
+        }
+
+        const id = setTimeout(playPhrase, 3200);
+        this.timeoutIds.push(id);
+      } catch(e) { /* silently ignore audio errors */ }
+    };
+
+    playPhrase();
+  }
+
+  stop() {
+    this.running = false;
+    this.timeoutIds.forEach(id => clearTimeout(id));
+    this.timeoutIds = [];
+    try {
+      this.nodes.forEach(n => { try { n.stop(); } catch(e) {} });
+      this.nodes = [];
+      if (this.ctx) { this.ctx.suspend(); }
+    } catch(e) {}
+  }
+}
+
+const magicMusic = typeof window !== 'undefined' ? new MagicMusic() : null;
+// ─────────────────────────────────────────────────────────────────────────────
 
 
 function IllustrationBlock({ cachedSrc, description, pageNum, storyId, heroPortraitPrompt, sidekickPortraitPrompt, heroPortraitUrl, onRetry }) {
@@ -411,6 +554,7 @@ export default function Home() {
       if (!res.ok) throw new Error(data.error || 'Something went wrong');
 
       const { title, pages } = parsePages(data.story);
+      if (magicMusic) magicMusic.stop();
       setStoryData({
         title, pages,
         images: data.images || [],
@@ -421,6 +565,7 @@ export default function Home() {
       setCurrentPage(0);
       setScreen('story');
     } catch (err) {
+      if (magicMusic) magicMusic.stop();
       setErrorMsg(err.message);
       setScreen('error');
     }
@@ -576,9 +721,27 @@ export default function Home() {
         {screen === 'loading' && (
           <div style={styles.card}>
             <div style={{ textAlign: 'center', padding: '10px 0' }}>
-              <span style={{ fontSize: '4.5rem', display: 'block', marginBottom: 18, animation: 'spin 2s linear infinite' }}>⭐</span>
-              <div style={{ fontFamily: "'Fredoka One', cursive", fontSize: '1.3rem', color: '#c084fc', marginBottom: 6 }}>{loadingMsg}</div>
-              <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: '0.9rem' }}>Creating your illustrated story...</div>
+              {/* Animated constellation of emojis */}
+              <div style={{ position: 'relative', height: 100, marginBottom: 8 }}>
+                {['⭐','🌙','✨','🌟','💫','🎨','📖','🐉'].map((e, i) => (
+                  <span key={i} style={{
+                    position: 'absolute',
+                    fontSize: i === 0 ? '3rem' : '1.4rem',
+                    left: `${12 + i * 11}%`,
+                    top: i % 2 === 0 ? '10%' : '45%',
+                    animation: `floatIll ${3 + (i % 3)}s ${i * 0.4}s ease-in-out infinite alternate`,
+                    opacity: i === 0 ? 1 : 0.7,
+                  }}>{e}</span>
+                ))}
+              </div>
+              <div style={{ fontFamily: "'Fredoka One', cursive", fontSize: '1.4rem', color: '#c084fc', marginBottom: 10 }}>{loadingMsg}</div>
+              <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.88rem', marginBottom: 20 }}>Creating your illustrated story...</div>
+              {/* Fun facts to read while waiting */}
+              <LoadingFacts />
+              {/* Music note indicator */}
+              <div style={{ marginTop: 18, color: 'rgba(255,255,255,0.35)', fontSize: '0.78rem' }}>
+                🎵 Magical music playing while we create your story
+              </div>
             </div>
           </div>
         )}
