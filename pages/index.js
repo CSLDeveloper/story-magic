@@ -56,7 +56,7 @@ function LoadingFacts() {
         setFactIndex(i => (i + 1) % LOADING_FACTS.length);
         setVisible(true);
       }, 500);
-    }, 4000);
+    }, 10000);
     return () => clearInterval(interval);
   }, []);
 
@@ -200,6 +200,10 @@ class MagicMusic {
 
     // Pentatonic scale frequencies (magical, never clashes)
     const pentatonic = [261.63, 293.66, 329.63, 392.00, 440.00, 523.25, 587.33, 659.25, 783.99, 880.00];
+
+    // Create and immediately resume AudioContext inside the user gesture
+    const ctx = this._ctx();
+    if (ctx.state === 'suspended') ctx.resume();
 
     const playPhrase = () => {
       if (!this.running) return;
@@ -539,6 +543,8 @@ export default function Home() {
       setStepIndex(stepIndex + 1);
     } else {
       setScreen('loading');
+      // Must start inside a click handler (user gesture) for browser audio policy
+      try { if (typeof magicMusic !== 'undefined' && magicMusic) magicMusic.start(); } catch(e) {}
       generateStory(newAnswers);
     }
   };
