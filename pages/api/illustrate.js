@@ -91,7 +91,7 @@ export default async function handler(req, res) {
         prompt: description,
         image_url: heroPortraitUrl,
         image_size: 'landscape_4_3',
-        scale: 0.9,
+        scale: 0.75,  // Lowered from 0.9 — high scale makes the portrait dominate and ignore the scene prompt
         guidance_scale: 3.5,
         num_inference_steps: 28,
         num_images: 1,
