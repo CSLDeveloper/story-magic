@@ -267,43 +267,43 @@ Write the complete story now, following the outline beat by beat:`;
       `PAGE ${p.pageNum}: ${p.text}`
     ).join('\n\n');
 
-    const imagePrompt = `You are a professional children's book illustrator writing detailed scene briefs for an AI image generator called InstantCharacter.
+    const imagePrompt = `You are a professional children's book illustrator writing scene briefs for an AI image generator called InstantCharacter.
 
-InstantCharacter works by taking a reference portrait of the main character and placing them into a fully described scene. It does NOT read the story — it only sees your scene description. So your description must be COMPLETE and SPECIFIC.
+HOW INSTANTCHARACTER WORKS (critical — this shapes how you write):
+- It receives a reference portrait of the HERO, so it already knows exactly what the hero looks like. Do NOT waste words re-describing the hero's appearance. Refer to the hero briefly, e.g. "the young knight ${heroName}".
+- It does NOT have reference images for anyone else. If the SIDEKICK or VILLAIN appears, you MUST paste their full appearance description word-for-word.
+- It does NOT read the story. It only sees your prompt. The scene must be completely self-contained.
+- It weights the START of the prompt most heavily. Lead with the ACTION and SCENE — never with static character descriptions.
 
-FIXED CHARACTER APPEARANCES (include these verbatim whenever the character appears):
-- HERO: ${bible.hero}
-- SIDEKICK: ${bible.partner}
-- VILLAIN: ${bible.baddie}
+CHARACTER REFERENCE:
+- HERO (reference image provided — describe briefly): ${bible.hero}
+- SIDEKICK (no reference — paste verbatim when present): ${bible.partner}
+- VILLAIN (no reference — paste verbatim when present): ${bible.baddie}
 
 STORY SETTING: ${setting}
-ART STYLE FOR ALL PAGES: children's book watercolor illustration, soft pastel colors, expressive faces, warm storybook lighting, no text, no words
 
-For EACH story page below, write a single image generation prompt (60-90 words) that:
+For EACH story page below, write ONE flowing prompt (60-90 words) on a SINGLE LINE, structured in this exact order:
 
-1. CHARACTERS PRESENT: List which characters appear on this page. For each one, paste their EXACT appearance description from above word-for-word. Do not paraphrase.
+1. ACTION FIRST: Open with the single most vivid frozen moment from this page — what the hero is DOING right now. Strong specific verb, body position, facial expression. Example openers: "Leaping across a chasm of glowing lava, ${heroName} stretches out her hand..." / "${heroName} crouches behind a moss-covered boulder, eyes wide with fear, as..."
 
-2. ACTION: Describe precisely what each character is doing in this exact moment — the single frozen frame that best represents this page. Use strong specific verbs. Describe body position, gesture, and facial expression.
+2. SCENE SECOND: The environment in rich visual detail pulled directly from the page text — specific colors, objects, time of day, weather. Be concrete: "deep emerald leaves", "cobalt twilight sky", "golden torchlight" — never just "green" or "blue".
 
-3. BACKGROUND SCENE: Describe the environment in rich visual detail — specific colors, objects, time of day, weather, lighting, atmosphere. Extract every visual clue from the page text.
+3. OTHER CHARACTERS: If the sidekick or villain appears on this page, include their verbatim appearance description and what they are doing. If they do NOT appear in the page text, leave them out entirely.
 
-4. COMPOSITION: Where are the characters positioned in the frame? Are they close-up, mid-shot, or wide? Is the villain looming in the background? Is the sidekick beside or behind the hero?
-
-5. MOOD/LIGHTING: What is the emotional tone? Describe the lighting — golden sunbeams, ominous storm clouds, magical sparkles, moonlit shadows, etc.
+4. MOOD/LIGHTING LAST: One short phrase for emotional tone and light — "warm golden glow of victory", "eerie violet shadows".
 
 CRITICAL RULES:
-- Every prompt must stand completely alone — a reader with no story context must understand the full scene
-- Copy character appearance descriptions WORD FOR WORD — never invent clothing or features
-- Each prompt must directly match what happens in the page text above it
-- If the villain does not appear in the page text, do NOT include the villain in the prompt
-- Be specific with colors: "deep emerald leaves", "cobalt blue sky", "golden torchlight" not just "green" or "blue"
+- Each prompt must directly depict what happens in that page's text — a parent comparing image to page should instantly see the match
+- Every prompt on ONE line only, no line breaks inside a prompt
+- Never invent characters, objects, or places not in the page text
+- Never describe the hero's clothing or features beyond a 3-5 word identifier — the reference image handles that
 
 HERE ARE THE STORY PAGES — write one prompt per page:
 
 ${imagePromptRequest}
 
-Format as:
-PAGE X: [your complete scene prompt]
+Format exactly as:
+PAGE X: [your complete scene prompt on one line]
 
 Write ONLY the prompts. Nothing else.`;
 
@@ -320,12 +320,19 @@ Write ONLY the prompts. Nothing else.`;
       .join('');
 
     // Parse image prompts keyed by page number
+    // Multi-line safe: continuation lines are appended to the current page's prompt
     const imgPromptMap = {};
-    const imgLines = imgText.split('\n').filter(l => l.trim());
-    for (const line of imgLines) {
-      const match = line.match(/^PAGE\s+(\d+):\s*(.+)/i);
+    let currentImgPage = null;
+    for (const line of imgText.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const match = trimmed.match(/^PAGE\s+(\d+):\s*(.*)/i);
       if (match) {
-        imgPromptMap[parseInt(match[1])] = match[2].trim();
+        currentImgPage = parseInt(match[1]);
+        imgPromptMap[currentImgPage] = match[2].trim();
+      } else if (currentImgPage !== null) {
+        // Continuation of a wrapped prompt — append it instead of dropping it
+        imgPromptMap[currentImgPage] += ' ' + trimmed;
       }
     }
 
