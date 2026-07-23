@@ -47,10 +47,12 @@ export default async function handler(req, res) {
     if (pageNum === 1) {
       if (!heroPortraitPrompt) return res.status(400).json({ error: 'heroPortraitPrompt required' });
 
-      // Generate hero portrait (FLUX Pro, fixed seed)
+      // Generate the TEMPLATE image: hero + sidekick together in the setting
+      // (heroPortraitPrompt arrives fully styled from generate.js)
+      // Landscape to match scene pages — Kontext keeps the template's framing
       const heroUrl = await falRun(falKey, 'fal-ai/flux-pro', {
-        prompt: `${heroPortraitPrompt}, full body, neutral standing pose, plain white background, children's book watercolor illustration, soft pastel colors, no text`,
-        image_size: 'portrait_4_3',
+        prompt: heroPortraitPrompt,
+        image_size: 'landscape_4_3',
         num_inference_steps: 28,
         guidance_scale: 3.5,
         num_images: 1,
@@ -58,48 +60,28 @@ export default async function handler(req, res) {
         seed: 42,
       });
 
-      // Generate sidekick portrait in parallel (best effort)
-      let sidekickUrl = null;
-      if (sidekickPortraitPrompt) {
-        try {
-          sidekickUrl = await falRun(falKey, 'fal-ai/flux-pro', {
-            prompt: `${sidekickPortraitPrompt}, full body, neutral standing pose, plain white background, children's book watercolor illustration, soft pastel colors, no text`,
-            image_size: 'portrait_4_3',
-            num_inference_steps: 28,
-            guidance_scale: 3.5,
-            num_images: 1,
-            output_format: 'jpeg',
-            seed: 99,
-          });
-        } catch(e) {
-          console.warn('Sidekick portrait failed (non-fatal):', e.message);
-        }
-      }
-
       // Return portrait URLs as JSON — browser stores them for pages 2+
-      return res.status(200).json({ heroPortraitUrl: heroUrl, sidekickPortraitUrl: sidekickUrl });
+      return res.status(200).json({ heroPortraitUrl: heroUrl, sidekickPortraitUrl: null });
     }
 
-    // ── PAGES 2+: Generate scene with InstantCharacter ─────────
+    // ── PAGES 2+: Generate scene with FLUX Kontext ─────────
     if (!description) return res.status(400).json({ error: 'description required' });
     if (!heroPortraitUrl) return res.status(400).json({ error: 'heroPortraitUrl required for pages 2+' });
 
     let sceneUrl;
     try {
-      // Try InstantCharacter first
-      sceneUrl = await falRun(falKey, 'fal-ai/instant-character', {
+      // FLUX Kontext: transforms the template image into each page's scene
+      // (same characters, same style, new action + background)
+      sceneUrl = await falRun(falKey, 'fal-ai/flux-pro/kontext', {
         prompt: description,
-        image_url: heroPortraitUrl,
-        image_size: 'landscape_4_3',
-        scale: 0.75,  // Lowered from 0.9 — high scale makes the portrait dominate and ignore the scene prompt
+        image_url: heroPortraitUrl,  // the page-1 template (hero + sidekick)
+        aspect_ratio: '4:3',
         guidance_scale: 3.5,
-        num_inference_steps: 28,
         num_images: 1,
         output_format: 'jpeg',
-        negative_prompt: 'wrong head, mismatched body, deformed, ugly, bad anatomy, text, watermark, scary, violent',
       });
     } catch(e) {
-      console.error('InstantCharacter failed, falling back to FLUX Pro:', e.message);
+      console.error('Kontext failed, falling back to FLUX Pro:', e.message);
       // Fallback: plain FLUX Pro text-to-image
       sceneUrl = await falRun(falKey, 'fal-ai/flux-pro', {
         prompt: `${description}, children's book watercolor illustration, soft pastel colors, no text`,
