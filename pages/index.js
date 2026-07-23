@@ -407,37 +407,21 @@ export default function Home() {
     stopReading();
   }, [currentPage]);
 
-  // Background image preloader — starts immediately on title page, looks 3 pages ahead
-  // Pages 2+ wait until page 1 is cached (portrait must exist on server first)
+  // Background image preloader — queues the ENTIRE story as soon as it opens.
+  // The template (page 1) paints first, then every remaining illustrated page
+  // generates in the background (max 3 at once to respect fal.ai rate limits),
+  // prioritizing pages closest to where the reader currently is.
+  // Each completed image updates imgCache, which re-runs this effect and
+  // pulls the next page from the queue — a self-refilling work queue.
   useEffect(() => {
     if (screen !== 'story' || !storyData) return;
 
-    // Start from page 1 even when on title page (currentPage === 0)
-    const startFrom = Math.max(1, currentPage);
+    const MAX_CONCURRENT = 3;
 
-    const pagesToFetch = [startFrom, startFrom + 1, startFrom + 2, startFrom + 3]
-      .filter(p => p >= 1 && p <= storyData.pages.length)
-      .filter(p => imgCache[p] === undefined && !fetchingRef.current.has(p));
-
-    if (pagesToFetch.length === 0) return;
-
-    pagesToFetch.forEach(async (p) => {
-      const description = storyData.images[p - 1];
-
-      // No illustration for this page
-      if (!description) {
-        setImgCache(prev => ({ ...prev, [p]: 'none' }));
-        return;
-      }
-
-      // Pages 2+ must wait for page 1 portrait URL to be stored
-      if (p > 1 && !portraitUrl) {
-        return; // Will retry when imgCache updates after page 1 finishes
-      }
-
+    const startFetch = async (p) => {
       fetchingRef.current.add(p);
       const result = await fetchIllustration(
-        description,
+        storyData.images[p - 1],
         p,
         storyData.storyId,
         storyData.heroPortraitPrompt,
@@ -455,8 +439,36 @@ export default function Home() {
       }
 
       setImgCache(prev => ({ ...prev, [p]: result.blobUrl }));
-    });
-  // imgCache in deps so effect re-runs when page 1 finishes and unblocks pages 2+
+    };
+
+    // Gather every page not yet fetched or in flight
+    const needsFetch = [];
+    for (let p = 1; p <= storyData.pages.length; p++) {
+      if (imgCache[p] !== undefined || fetchingRef.current.has(p)) continue;
+      if (!storyData.images[p - 1]) {
+        // No illustration for this page — mark instantly, no fetch needed
+        setImgCache(prev => ({ ...prev, [p]: 'none' }));
+      } else {
+        needsFetch.push(p);
+      }
+    }
+    if (needsFetch.length === 0) return;
+
+    // The template (page 1) must finish first — every scene page depends on it
+    if (!portraitUrl) {
+      if (needsFetch.includes(1) && !fetchingRef.current.has(1)) {
+        startFetch(1);
+      }
+      return; // Scene pages unblock automatically when portraitUrl is set
+    }
+
+    // Fill available slots, prioritizing pages nearest the reader
+    const slots = MAX_CONCURRENT - fetchingRef.current.size;
+    if (slots <= 0) return;
+    const anchor = Math.max(1, currentPage);
+    needsFetch.sort((a, b) => Math.abs(a - anchor) - Math.abs(b - anchor));
+    needsFetch.slice(0, slots).forEach(startFetch);
+  // imgCache in deps: each completed image re-runs this effect to refill slots
   }, [currentPage, screen, storyData, imgCache, portraitUrl]);
 
   const stopReading = () => {
